@@ -1,0 +1,203 @@
+# agents.md — Signal Deck Project Guidance
+
+This file explains the **intent, philosophy, and working style** of the Signal Deck project for human and AI contributors.
+
+If you are an LMM agent, **read this file before writing any code.**
+
+For full details see:
+
+👉 **`docs/design.md` — Signal Deck Phased Implementation Plan**
+
+---
+
+# Project Name
+
+**Signal Deck**
+
+Tagline ideas:
+
+* *The oscilloscope for Home Assistant*
+* *Observe your home*
+* *Signals before booleans*
+
+Signal Deck is a **Home Assistant Lovelace card** that embeds a safe Python-like REPL (via WASM) to explore, debug, and visualise Home Assistant state.
+
+It is inspired by:
+
+* Jupyter notebooks
+* ipywidgets
+* Observability dashboards
+* Retro terminal tools
+* Robin Ridler’s Home Assistant observability work
+
+---
+
+# What Signal Deck IS
+
+Signal Deck is:
+
+• A safe Python shell inside Lovelace
+• A debugging and observability tool
+• A way for LLMs to generate snippets you can run
+• A rich display system for HA state
+• A mini-automation control surface (safe + gated)
+• An event-driven diagnostics instrument
+
+It should feel like:
+
+👉 an oscilloscope
+👉 a notebook
+👉 a debugging console
+👉 an observability dashboard
+
+---
+
+# What Signal Deck is NOT
+
+Signal Deck is NOT:
+
+• Remote code execution
+• A full automation engine
+• A backend integration
+• A replacement for HA automations
+• A generic Python environment
+
+Safety and clarity are more important than power.
+
+---
+
+# Core Design Principles
+
+1. **Safe by default**
+
+   * Read-only state access
+   * Service calls require explicit arming
+   * No filesystem or network access
+
+2. **Small, opinionated API**
+
+   * `ha.state()`
+   * `ha.states()`
+   * `ha.match()`
+   * `ha.history()`
+   * `ui.entity()`, `ui.table()`, `ui.ts()` etc.
+
+3. **LLM-friendly output**
+
+   * Tables
+   * JSON
+   * ASCII timelines
+   * Copy-paste debug reports
+
+4. **Observability first**
+
+   * Explain why things changed
+   * Correlate signals
+   * Show timelines
+   * Prefer signals over booleans
+
+5. **Declarative configuration**
+
+   * Startup scripts
+   * Scheduled snippets
+   * Event-triggered snippets
+   * Bundles
+
+6. **Runs entirely in Lovelace**
+
+   * Uses HA WebSocket API
+   * No backend required
+
+---
+
+# Visual Style (Important!)
+
+Signal Deck should feel **awesome and nerdy**.
+
+Use:
+
+• **Iosevka Nerd Font** (primary font)
+• Monospace layouts
+• Nerd Font glyphs
+• Coloured terminal-style output
+• ASCII tables and timelines
+• Dense observability dashboards
+
+Think:
+
+👉 htop
+👉 retro oscilloscope
+👉 Winamp visualiser
+👉 network monitoring consoles
+
+The UI should make engineers smile.
+
+---
+
+# Example UI Goals
+
+* Inline entity displays
+* ASCII timeline of binary sensors
+* ECharts graphs for history/statistics
+* Tables with sparkline columns
+* Nerd-font icons for signals
+* “Explain this flip” panels
+
+---
+
+# Development Phases
+
+Signal Deck is built in phases.
+
+Agents should prioritise:
+
+1. MVP shell
+2. Rich display
+3. History + ECharts
+4. Event/scheduled snippets
+5. Widgets
+6. Debugging toolkit
+7. Packaging
+
+See full plan:
+
+👉 **`docs/design.md`**
+
+---
+
+# Behaviour Guidelines for Agents
+
+When contributing:
+
+• Prefer clarity over cleverness
+• Keep API minimal
+• Add safety checks
+• Make output readable in tables
+• Use monospace formatting
+• Use Nerd Font icons where helpful
+• Do not add backend dependencies unless explicitly requested
+• Do not expand scope into full automation engine
+
+When unsure, optimise for:
+
+👉 debugging presence logic
+👉 understanding “why did this happen?”
+
+These are the primary user needs.
+
+---
+
+# Tone of the Project
+
+Signal Deck should feel like:
+
+• a professional engineering instrument
+• fun and nerdy
+• deeply technical
+• precise and explainable
+
+It is part of a broader ecosystem of observability work (Accumulator, dashboards, etc.).
+
+---
+
+# End
