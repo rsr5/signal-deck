@@ -1,0 +1,5 @@
+{
+    "name": "Signal Deck",
+    "render_readme": true,
+    "hacs": "frontend"
+}
