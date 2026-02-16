@@ -1,8 +1,11 @@
 node_modules/
-dist/
 pkg/
 target/
-*.wasm
 .DS_Store
 OPEN_SOURCE_PLAN.md
 ha_python_shell_plan.md
+
+# dist/ build artifacts we don't ship
+dist/index.html
+dist/types/
+dist/*.map
