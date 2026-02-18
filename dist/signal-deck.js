@@ -428,9 +428,9 @@ async function initEngine() {
     if (initialized)
         return;
     // Build a cache-busting URL so the browser fetches a fresh WASM after rebuilds.
-    // "257aeec0" is replaced at build time by rollup-plugin-replace.
+    // "e4acdc09" is replaced at build time by rollup-plugin-replace.
     const wasmUrl = new URL('signal_deck_engine_bg.wasm', import.meta.url);
-    wasmUrl.searchParams.set('v', "257aeec0");
+    wasmUrl.searchParams.set('v', "e4acdc09");
     await __wbg_init(wasmUrl);
     initialized = true;
 }
