@@ -148,6 +148,7 @@ Python API — State & Entities:
 Python API — History & Diagnostics:
   history(id, [hours]) Get entity history (default 6h)
   statistics(id, [hours], [period])  Get long-term statistics
+  events(id, [hours])  Get calendar events (default 14 days forward)
   logbook([id], [hours])  Get logbook entries
   traces([automation_id]) Get automation traces (all or specific)
   error_log()          Fetch the HA error log

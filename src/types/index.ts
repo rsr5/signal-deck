@@ -16,4 +16,6 @@ export type {
   LogbookSpec,
   LogbookEntrySpec,
   EChartsSpec,
+  CalendarEventsSpec,
+  CalendarEventEntrySpec,
 } from './render.js';

@@ -155,6 +155,21 @@ export interface EChartsSpec {
   height: number;
 }
 
+export interface CalendarEventEntrySpec {
+  summary: string;
+  start: string | null;
+  end: string | null;
+  description: string | null;
+  location: string | null;
+  all_day: boolean;
+}
+
+export interface CalendarEventsSpec {
+  type: 'calendar_events';
+  entity_id: string;
+  entries: CalendarEventEntrySpec[];
+}
+
 export type RenderSpec =
   | TextSpec
   | ErrorSpec
@@ -173,4 +188,5 @@ export type RenderSpec =
   | TimelineSpec
   | LogbookSpec
   | TraceListSpec
-  | EChartsSpec;
+  | EChartsSpec
+  | CalendarEventsSpec;

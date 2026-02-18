@@ -5,6 +5,9 @@
 import initWasm, { WasmShellEngine } from '../../pkg/signal_deck_engine.js';
 import type { RenderSpec } from '../types/index.js';
 
+/** Replaced at build time by rollup-plugin-replace with a short hash. */
+declare const __BUILD_HASH__: string;
+
 let initialized = false;
 
 /**
@@ -13,9 +16,12 @@ let initialized = false;
 export async function initEngine(): Promise<void> {
   if (initialized) return;
 
-  // When using @rollup/plugin-wasm with sync inlining, the WASM bytes
-  // are embedded in the JS bundle. We import and init them here.
-  await initWasm();
+  // Build a cache-busting URL so the browser fetches a fresh WASM after rebuilds.
+  // __BUILD_HASH__ is replaced at build time by rollup-plugin-replace.
+  const wasmUrl = new URL('signal_deck_engine_bg.wasm', import.meta.url);
+  wasmUrl.searchParams.set('v', __BUILD_HASH__);
+
+  await initWasm(wasmUrl);
   initialized = true;
 }
 

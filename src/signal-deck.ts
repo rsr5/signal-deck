@@ -1364,6 +1364,147 @@ export class SignalDeck extends LitElement {
       color: var(--sd-dim);
     }
 
+    /* ── Calendar card ─────────────────────────────────────── */
+
+    .entity-calendar-event {
+      margin: 6px 0;
+      padding: 6px 8px;
+      background: rgba(0, 229, 255, 0.04);
+      border-left: 2px solid var(--sd-accent);
+      border-radius: 2px;
+    }
+
+    .entity-calendar-summary {
+      font-weight: 600;
+      color: var(--sd-fg);
+      font-size: 13px;
+    }
+
+    .entity-calendar-desc {
+      color: var(--sd-dim);
+      font-size: 12px;
+      margin-top: 2px;
+    }
+
+    .entity-calendar-time {
+      color: var(--sd-dim);
+      font-size: 12px;
+      margin-top: 2px;
+    }
+
+    .entity-calendar-location {
+      color: var(--sd-dim);
+      font-size: 12px;
+      margin-top: 2px;
+    }
+
+    .entity-calendar-hint {
+      margin: 8px 0 4px;
+      padding: 4px 8px;
+      font-size: 11px;
+      color: var(--sd-dim);
+      background: rgba(0, 229, 255, 0.04);
+      border-radius: 3px;
+    }
+
+    .entity-calendar-hint code {
+      color: var(--sd-accent);
+      font-family: var(--sd-font, 'Iosevka Nerd Font', monospace);
+      font-size: 11px;
+    }
+
+    /* ── Calendar events (events() display) ──────────────────── */
+
+    .calendar-events-container {
+      margin: 4px 0;
+    }
+
+    .calendar-date-group {
+      margin-bottom: 8px;
+    }
+
+    .calendar-date-header {
+      font-weight: 600;
+      font-size: 13px;
+      color: var(--sd-accent);
+      margin-bottom: 4px;
+      padding: 2px 0;
+      border-bottom: 1px solid rgba(0, 229, 255, 0.15);
+    }
+
+    .calendar-event-row {
+      display: flex;
+      gap: 8px;
+      padding: 4px 0;
+      min-height: 28px;
+    }
+
+    .calendar-event-dot-col {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      width: 16px;
+      flex-shrink: 0;
+    }
+
+    .calendar-event-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      margin-top: 5px;
+      flex-shrink: 0;
+    }
+
+    .calendar-event-dot.dot-allday {
+      background: var(--sd-accent);
+    }
+
+    .calendar-event-dot.dot-timed {
+      background: var(--sd-success);
+    }
+
+    .calendar-event-line {
+      width: 1px;
+      flex: 1;
+      background: rgba(0, 229, 255, 0.12);
+      margin-top: 2px;
+    }
+
+    .calendar-event-body {
+      flex: 1;
+      min-width: 0;
+    }
+
+    .calendar-event-main {
+      display: flex;
+      align-items: baseline;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+
+    .calendar-event-summary {
+      font-weight: 600;
+      font-size: 13px;
+      color: var(--sd-fg);
+    }
+
+    .calendar-event-time {
+      font-size: 12px;
+      color: var(--sd-dim);
+    }
+
+    .calendar-event-desc {
+      font-size: 12px;
+      color: var(--sd-dim);
+      margin-top: 2px;
+    }
+
+    .calendar-event-location {
+      font-size: 12px;
+      color: var(--sd-dim);
+      margin-top: 2px;
+    }
+
     /* State colors */
     .state-success { color: var(--sd-success); }
     .state-error { color: var(--sd-error); }
@@ -2337,6 +2478,9 @@ export class SignalDeck extends LitElement {
       case 'echarts':
         return this._renderECharts(spec);
 
+      case 'calendar_events':
+        return this._renderCalendarEvents(spec);
+
       default:
         return html`<div class="text-output">[unknown spec type]</div>`;
     }
@@ -2650,6 +2794,97 @@ export class SignalDeck extends LitElement {
     return parts.length > 0 ? parts.join(' ') : null;
   }
 
+  /** Render a rich calendar events display — upcoming events grouped by date. */
+  private _renderCalendarEvents(spec: RenderSpec & { type: 'calendar_events' }): TemplateResult {
+    const { entries, entity_id } = spec;
+
+    if (entries.length === 0) {
+      return html`<div class="text-output">No upcoming events for ${entity_id}.</div>`;
+    }
+
+    // Group events by date.
+    const grouped = new Map<string, typeof entries>();
+    for (const entry of entries) {
+      const dateKey = this._calendarDateKey(entry.start);
+      const list = grouped.get(dateKey) ?? [];
+      list.push(entry);
+      grouped.set(dateKey, list);
+    }
+
+    return html`
+      <div class="calendar-events-container">
+        ${[...grouped.entries()].map(([dateKey, dayEntries]) => {
+          const dateLabel = this._formatCalendarDate(dateKey);
+          return html`
+            <div class="calendar-date-group">
+              <div class="calendar-date-header">📅 ${dateLabel}</div>
+              ${dayEntries.map((entry) => html`
+                <div class="calendar-event-row">
+                  <div class="calendar-event-dot-col">
+                    <span class="calendar-event-dot ${entry.all_day ? 'dot-allday' : 'dot-timed'}"></span>
+                    <span class="calendar-event-line"></span>
+                  </div>
+                  <div class="calendar-event-body">
+                    <div class="calendar-event-main">
+                      <span class="calendar-event-summary">${entry.summary}</span>
+                      ${entry.all_day
+                        ? html`<span class="badge badge-dim">all day</span>`
+                        : html`<span class="calendar-event-time">${this._formatCalendarTime(entry.start)}${entry.end ? ` → ${this._formatCalendarTime(entry.end)}` : ''}</span>`}
+                    </div>
+                    ${entry.description
+                      ? html`<div class="calendar-event-desc">${entry.description}</div>`
+                      : nothing}
+                    ${entry.location
+                      ? html`<div class="calendar-event-location">📍 ${entry.location}</div>`
+                      : nothing}
+                  </div>
+                </div>
+              `)}
+            </div>
+          `;
+        })}
+      </div>
+    `;
+  }
+
+  /** Extract a date key (YYYY-MM-DD) from an ISO datetime or date string. */
+  private _calendarDateKey(dateStr: string | null): string {
+    if (!dateStr) return 'unknown';
+    return dateStr.slice(0, 10);
+  }
+
+  /** Format a date key into a friendly label (e.g. "Tue 24 Feb" or "Today"). */
+  private _formatCalendarDate(dateKey: string): string {
+    try {
+      const d = new Date(dateKey + 'T00:00:00');
+      const now = new Date();
+      const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+      const target = new Date(d.getFullYear(), d.getMonth(), d.getDate());
+      const diffDays = Math.round((target.getTime() - today.getTime()) / 86400000);
+
+      if (diffDays === 0) return 'Today';
+      if (diffDays === 1) return 'Tomorrow';
+
+      const dayName = d.toLocaleDateString('en-GB', { weekday: 'short' });
+      const day = d.getDate();
+      const month = d.toLocaleDateString('en-GB', { month: 'short' });
+      return `${dayName} ${day} ${month}`;
+    } catch {
+      return dateKey;
+    }
+  }
+
+  /** Format a calendar time from an ISO datetime string. */
+  private _formatCalendarTime(dateStr: string | null): string {
+    if (!dateStr || dateStr.length <= 10) return '';
+    try {
+      const d = new Date(dateStr);
+      return `${d.getHours().toString().padStart(2, '0')}:${d.getMinutes().toString().padStart(2, '0')}`;
+    } catch {
+      return dateStr;
+    }
+  }
+
   /** Render a rich trace list — automation execution trace cards. */
   private _renderTraceList(spec: RenderSpec & { type: 'trace_list' }): TemplateResult {
     const { entries } = spec;
@@ -2823,6 +3058,8 @@ export class SignalDeck extends LitElement {
         return spec.entries.map((e) => `${e.start}\t${e.automation ?? ''}\t${e.execution ?? e.state}`).join('\n');
       case 'echarts':
         return `Chart${spec.title ? `: ${spec.title}` : ''} (ECharts — interactive chart rendered in card)`;
+      case 'calendar_events':
+        return spec.entries.map((e) => `${e.start ?? ''}\t${e.summary}${e.location ? `\t${e.location}` : ''}`).join('\n');
       case 'vstack':
         return spec.children.map((c) => this._specToCopyText(c)).join('\n');
       case 'hstack':

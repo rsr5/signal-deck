@@ -131,6 +131,13 @@ pub enum RenderSpec {
         /// Chart height in pixels (default 300).
         height: u32,
     },
+
+    /// A rich calendar events display — upcoming events with dates, times, locations.
+    #[serde(rename = "calendar_events")]
+    CalendarEvents {
+        entity_id: String,
+        entries: Vec<CalendarEventEntry>,
+    },
 }
 
 /// A single logbook entry — a state change event with context.
@@ -169,6 +176,18 @@ pub struct TraceEntry {
     pub execution: Option<String>,
     /// Error message if the trace failed.
     pub error: Option<String>,
+}
+
+/// A single calendar event — summary, start/end, location.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CalendarEventEntry {
+    pub summary: String,
+    pub start: Option<String>,
+    pub end: Option<String>,
+    pub description: Option<String>,
+    pub location: Option<String>,
+    /// Whether this is an all-day event (no specific time).
+    pub all_day: bool,
 }
 
 impl RenderSpec {
@@ -335,6 +354,14 @@ impl RenderSpec {
             option,
             title,
             height: height.unwrap_or(300),
+        }
+    }
+
+    /// Create a calendar events spec from a list of entries.
+    pub fn calendar_events(entity_id: impl Into<String>, entries: Vec<CalendarEventEntry>) -> Self {
+        Self::CalendarEvents {
+            entity_id: entity_id.into(),
+            entries,
         }
     }
 }

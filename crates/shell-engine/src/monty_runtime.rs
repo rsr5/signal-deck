@@ -45,6 +45,9 @@ pub const HA_EXTERNAL_FUNCTIONS: &[&str] = &[
     // History & statistics — long names
     "get_history",
     "get_statistics",
+    // Calendar events
+    "events",
+    "get_events",
     // Services
     "call_service",
     "get_services",
@@ -299,6 +302,21 @@ pub fn map_ext_call_to_host_call(
                     })))
                 }
             }
+        }
+        "events" | "get_events" => {
+            let entity_id = args.first().and_then(|a| {
+                if let MontyObject::String(s) = a { Some(s.as_str()) } else { None }
+            })?;
+            // Second arg: hours forward to search (int/float), default 14 days.
+            let hours = args.get(1).and_then(|a| match a {
+                MontyObject::Int(n) => Some(*n as f64),
+                MontyObject::Float(f) => Some(*f),
+                _ => None,
+            }).unwrap_or(24.0 * 14.0);
+            Some(("get_events", serde_json::json!({
+                "entity_id": entity_id,
+                "hours": hours,
+            })))
         }
         "statistics" | "get_statistics" => {
             let entity_id = args.first().and_then(|a| {
@@ -563,6 +581,48 @@ pub fn json_to_entity_state_list(value: &serde_json::Value) -> MontyObject {
     }
 }
 
+/// Convert a JSON calendar event object to a CalendarEvent dataclass.
+pub fn json_to_calendar_event(value: &serde_json::Value) -> MontyObject {
+    let summary = value.get("summary").and_then(|v| v.as_str()).unwrap_or("").to_string();
+    let start = value.get("start").and_then(|v| v.as_str()).unwrap_or("").to_string();
+    let end = value.get("end").and_then(|v| v.as_str()).unwrap_or("").to_string();
+    let description = value.get("description").and_then(|v| v.as_str()).unwrap_or("").to_string();
+    let location = value.get("location").and_then(|v| v.as_str()).unwrap_or("").to_string();
+    let all_day = !start.is_empty() && start.len() <= 10;
+
+    MontyObject::Dataclass {
+        name: "CalendarEvent".to_string(),
+        type_id: 0,
+        field_names: vec![
+            "summary".into(),
+            "start".into(),
+            "end".into(),
+            "description".into(),
+            "location".into(),
+            "all_day".into(),
+        ],
+        attrs: vec![
+            (MontyObject::String("summary".into()), MontyObject::String(summary)),
+            (MontyObject::String("start".into()), MontyObject::String(start)),
+            (MontyObject::String("end".into()), MontyObject::String(end)),
+            (MontyObject::String("description".into()), MontyObject::String(description)),
+            (MontyObject::String("location".into()), MontyObject::String(location)),
+            (MontyObject::String("all_day".into()), MontyObject::Bool(all_day)),
+        ].into(),
+        frozen: false,
+    }
+}
+
+/// Convert a JSON array of calendar events to a list of CalendarEvent.
+pub fn json_to_calendar_event_list(value: &serde_json::Value) -> MontyObject {
+    match value {
+        serde_json::Value::Array(arr) => {
+            MontyObject::List(arr.iter().map(json_to_calendar_event).collect())
+        }
+        _ => json_to_calendar_event(value),
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Error formatting
 // ---------------------------------------------------------------------------
@@ -724,6 +784,32 @@ mod tests {
         let args = vec![MontyObject::Int(42)];
         let result = map_ext_call_to_host_call("show", &args);
         assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_map_ext_call_events() {
+        let args = vec![MontyObject::String("calendar.waste".to_string())];
+        let result = map_ext_call_to_host_call("events", &args);
+        assert!(result.is_some());
+        let (method, params) = result.unwrap();
+        assert_eq!(method, "get_events");
+        assert_eq!(params["entity_id"], "calendar.waste");
+        // Default 14 days = 336 hours
+        assert_eq!(params["hours"], 336.0);
+    }
+
+    #[test]
+    fn test_map_ext_call_get_events_with_hours() {
+        let args = vec![
+            MontyObject::String("calendar.waste".to_string()),
+            MontyObject::Int(48),
+        ];
+        let result = map_ext_call_to_host_call("get_events", &args);
+        assert!(result.is_some());
+        let (method, params) = result.unwrap();
+        assert_eq!(method, "get_events");
+        assert_eq!(params["entity_id"], "calendar.waste");
+        assert_eq!(params["hours"], 48.0);
     }
 
     #[test]

@@ -124,13 +124,21 @@ EXAMPLE 4 — "Why did the front door sensor trigger?"
 logbook("binary_sensor.front_door", ago("24h"))
 \`\`\`
 
-EXAMPLE 5 — "What's happening in the bedroom?"
+EXAMPLE 5 — "What's the next waste collection?" or any calendar question
+
+Calendar entities only show one event in state(). Use events() to see all upcoming events:
+
+\`\`\`signal-deck
+events("calendar.my_calendar")
+\`\`\`
+
+EXAMPLE 6 — "What's happening in the bedroom?"
 
 \`\`\`signal-deck
 room("bedroom")
 \`\`\`
 
-EXAMPLE 6 — "What sensors are in the kitchen?"
+EXAMPLE 7 — "What sensors are in the kitchen?"
 
 \`\`\`signal-deck
 matches = [e for e in states("sensor") if "kitchen" in e.entity_id or "kitchen" in e.name.lower()]
@@ -140,7 +148,7 @@ show(matches)
 If no results, try different words, or search ALL domains with states() (no argument) instead of just one.
 Always use words the user actually said — they know their own device names.
 
-EXAMPLE 7 — What a good final answer looks like:
+EXAMPLE 8 — What a good final answer looks like:
 
 After running code and getting results, reply like this (plain text, no code block):
 
@@ -148,7 +156,7 @@ After running code and getting results, reply like this (plain text, no code blo
 
 Notice: cites entity IDs and actual state values. No guessing. No "I believe" or "it appears." Just data.
 
-EXAMPLE 8 — "How much energy did I use today?"
+EXAMPLE 9 — "How much energy did I use today?"
 
 When results contain numeric data, use a chart — users prefer visual answers.
 Pick the right chart type:
@@ -190,6 +198,7 @@ State & Entities:
 History & Diagnostics (call as bare expressions — they auto-render rich displays):
   history("entity_id", hours)       → sparkline or timeline (auto-detected)
   statistics("entity_id", hours, period) → long-term stats ("5minute"/"hour"/"day")
+  events("calendar.entity_id")      → upcoming calendar events (next 14 days)
   logbook("entity_id", hours)       → who/what changed this entity and why
   traces("automation.xyz")          → automation trace (trigger, steps, errors)
   traces()                          → recent traces across all automations
@@ -644,6 +653,20 @@ export class AnalystSession {
       }
       case 'echarts':
         return `📊 Chart${spec.title ? `: ${spec.title}` : ''} (rendered as interactive ECharts)`;
+      case 'calendar_events': {
+        const limit = AnalystSession.MAX_TEXT_ROWS;
+        const total = spec.entries.length;
+        const shown = spec.entries.slice(0, limit);
+        const lines = shown.map((e) => {
+          const time = e.all_day ? 'all-day' : (e.start ?? '');
+          const loc = e.location ? ` 📍${e.location}` : '';
+          return `${time}: ${e.summary}${loc}`;
+        }).join('\n');
+        if (total > limit) {
+          return `📅 ${total} events for ${spec.entity_id}:\n${lines}\n... (${total - limit} more hidden)`;
+        }
+        return `📅 ${total} events for ${spec.entity_id}:\n${lines}`;
+      }
       default:
         return JSON.stringify(spec);
     }

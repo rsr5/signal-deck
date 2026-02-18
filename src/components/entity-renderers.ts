@@ -18,6 +18,7 @@ import { renderPersonCard } from './entities/person.js';
 import { renderCoverCard } from './entities/cover.js';
 import { renderAutomationCard } from './entities/automation.js';
 import { renderWeatherCard } from './entities/weather.js';
+import { renderCalendarCard } from './entities/calendar.js';
 
 /**
  * Render an entity card with domain-aware specialisation.
@@ -43,6 +44,8 @@ export function renderEntityCard(spec: EntityCardSpec): TemplateResult {
       return renderAutomationCard(spec);
     case 'weather':
       return renderWeatherCard(spec);
+    case 'calendar':
+      return renderCalendarCard(spec);
     default:
       return renderGenericCard(spec);
   }

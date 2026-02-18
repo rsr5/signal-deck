@@ -427,9 +427,11 @@ let initialized = false;
 async function initEngine() {
     if (initialized)
         return;
-    // When using @rollup/plugin-wasm with sync inlining, the WASM bytes
-    // are embedded in the JS bundle. We import and init them here.
-    await __wbg_init();
+    // Build a cache-busting URL so the browser fetches a fresh WASM after rebuilds.
+    // "257aeec0" is replaced at build time by rollup-plugin-replace.
+    const wasmUrl = new URL('signal_deck_engine_bg.wasm', import.meta.url);
+    wasmUrl.searchParams.set('v', "257aeec0");
+    await __wbg_init(wasmUrl);
     initialized = true;
 }
 /**
@@ -513,6 +515,8 @@ async function fulfillHostCall(hass, method, params) {
             return getServices(hass, params);
         case 'call_service':
             return callService(hass, params);
+        case 'get_events':
+            return getCalendarEvents(hass, params);
         default:
             return { data: JSON.stringify({ error: `Unknown host method: ${method}` }) };
     }
@@ -562,6 +566,33 @@ async function getHistory(hass, params) {
     }
     catch (e) {
         return { data: JSON.stringify({ error: `History fetch failed: ${e}` }) };
+    }
+}
+// ---------------------------------------------------------------------------
+// Calendar events — "what events does calendar X have in this time window?"
+// ---------------------------------------------------------------------------
+/** Fetch calendar events for an entity over a time period. */
+async function getCalendarEvents(hass, params) {
+    const entityId = params.entity_id;
+    const hours = params.hours || 24 * 14; // default 14 days
+    const start = new Date(Date.now());
+    const end = new Date(Date.now() + hours * 60 * 60 * 1000);
+    const startStr = start.toISOString();
+    const endStr = end.toISOString();
+    try {
+        const result = await hass.callApi('GET', `calendars/${entityId}?start=${encodeURIComponent(startStr)}&end=${encodeURIComponent(endStr)}`);
+        // Flatten start/end to simple strings for easier consumption.
+        const events = (result ?? []).map((ev) => ({
+            summary: ev.summary,
+            start: ev.start?.dateTime ?? ev.start?.date ?? null,
+            end: ev.end?.dateTime ?? ev.end?.date ?? null,
+            description: ev.description ?? null,
+            location: ev.location ?? null,
+        }));
+        return { data: JSON.stringify(events) };
+    }
+    catch (e) {
+        return { data: JSON.stringify({ error: `Calendar events fetch failed: ${e}` }) };
     }
 }
 /** Get long-term statistics via HA WebSocket (recorder). */
@@ -4335,7 +4366,7 @@ function renderGenericCard(spec) {
  * Light entity card — brightness bar, color temp, RGB swatch.
  */
 /** Attributes we render in the specialised section — hide from the generic table. */
-const HANDLED_ATTRS$8 = [
+const HANDLED_ATTRS$9 = [
     'brightness', 'color_temp', 'color_temp_kelvin', 'hs_color', 'rgb_color',
     'xy_color', 'color_mode', 'min_mireds', 'max_mireds',
     'min_color_temp_kelvin', 'max_color_temp_kelvin',
@@ -4357,7 +4388,7 @@ function renderLightCard(spec) {
     // Active effect.
     const effect = attrStr(spec, 'effect');
     // Remaining attributes (not handled above).
-    const remaining = attrsExcluding(spec, HANDLED_ATTRS$8);
+    const remaining = attrsExcluding(spec, HANDLED_ATTRS$9);
     return b$1 `
     <div class="entity-card">
       ${renderCardHeader(spec)}
@@ -4424,7 +4455,7 @@ const LABELS = {
     tamper: ['Tampered', 'OK'],
     update: ['Available', 'Up to date'],
 };
-const HANDLED_ATTRS$7 = ['device_class'];
+const HANDLED_ATTRS$8 = ['device_class'];
 function renderBinarySensorCard(spec) {
     const isOn = spec.state === 'on';
     const dc = spec.device_class ?? '';
@@ -4432,7 +4463,7 @@ function renderBinarySensorCard(spec) {
     const label = isOn ? labels[0] : labels[1];
     const stateClass = `state-${spec.state_color}`;
     const indicator = isOn ? '●' : '○';
-    const remaining = attrsExcluding(spec, HANDLED_ATTRS$7);
+    const remaining = attrsExcluding(spec, HANDLED_ATTRS$8);
     return b$1 `
     <div class="entity-card">
       ${renderCardHeader(spec)}
@@ -4452,7 +4483,7 @@ function renderBinarySensorCard(spec) {
 /**
  * Sensor entity card — big number for numerics, battery bar, relative timestamps.
  */
-const HANDLED_ATTRS$6 = ['state_class'];
+const HANDLED_ATTRS$7 = ['state_class'];
 function renderSensorCard(spec) {
     const stateClass = `state-${spec.state_color}`;
     const dc = spec.device_class ?? '';
@@ -4462,7 +4493,7 @@ function renderSensorCard(spec) {
     const batteryLevel = isBattery && isNumeric ? Number(spec.state) : undefined;
     // Timestamp sensor — show relative time.
     const isTimestamp = dc === 'timestamp';
-    const remaining = attrsExcluding(spec, HANDLED_ATTRS$6);
+    const remaining = attrsExcluding(spec, HANDLED_ATTRS$7);
     return b$1 `
     <div class="entity-card">
       ${renderCardHeader(spec)}
@@ -4520,7 +4551,7 @@ function formatRelativeTime(iso) {
 /**
  * Climate entity card — current vs target temp, HVAC mode badge, humidity.
  */
-const HANDLED_ATTRS$5 = [
+const HANDLED_ATTRS$6 = [
     'temperature', 'target_temp_high', 'target_temp_low',
     'current_temperature', 'current_humidity', 'humidity',
     'hvac_action', 'hvac_modes', 'preset_mode', 'preset_modes',
@@ -4547,7 +4578,7 @@ function renderClimateCard(spec) {
     const presetMode = attrStr(spec, 'preset_mode');
     const fanMode = attrStr(spec, 'fan_mode');
     const unit = spec.unit ?? '°';
-    const remaining = attrsExcluding(spec, HANDLED_ATTRS$5);
+    const remaining = attrsExcluding(spec, HANDLED_ATTRS$6);
     return b$1 `
     <div class="entity-card">
       ${renderCardHeader(spec)}
@@ -4611,7 +4642,7 @@ function renderClimateCard(spec) {
 /**
  * Media player entity card — now-playing layout with volume bar.
  */
-const HANDLED_ATTRS$4 = [
+const HANDLED_ATTRS$5 = [
     'media_title', 'media_artist', 'media_album_name', 'media_content_type',
     'volume_level', 'is_volume_muted', 'source', 'source_list',
     'sound_mode', 'sound_mode_list', 'media_duration', 'media_position',
@@ -4637,7 +4668,7 @@ function renderMediaPlayerCard(spec) {
     const appName = attrStr(spec, 'app_name');
     const playbackIcon = PLAYBACK_ICON[spec.state] ?? '⏹';
     const volumePct = volumeLevel !== undefined ? Math.round(volumeLevel * 100) : undefined;
-    const remaining = attrsExcluding(spec, HANDLED_ATTRS$4);
+    const remaining = attrsExcluding(spec, HANDLED_ATTRS$5);
     return b$1 `
     <div class="entity-card">
       ${renderCardHeader(spec)}
@@ -4675,7 +4706,7 @@ function renderMediaPlayerCard(spec) {
 /**
  * Person entity card — location-centric display.
  */
-const HANDLED_ATTRS$3 = [
+const HANDLED_ATTRS$4 = [
     'source', 'latitude', 'longitude', 'gps_accuracy',
     'entity_picture', 'user_id', 'id', 'device_trackers',
 ];
@@ -4690,7 +4721,7 @@ function renderPersonCard(spec) {
     const locationLabel = spec.state === 'not_home'
         ? 'Away'
         : spec.state.charAt(0).toUpperCase() + spec.state.slice(1);
-    const remaining = attrsExcluding(spec, HANDLED_ATTRS$3);
+    const remaining = attrsExcluding(spec, HANDLED_ATTRS$4);
     return b$1 `
     <div class="entity-card">
       ${renderCardHeader(spec)}
@@ -4737,7 +4768,7 @@ function formatTrackers(raw) {
 /**
  * Cover entity card — position bar, tilt, open/closed state.
  */
-const HANDLED_ATTRS$2 = [
+const HANDLED_ATTRS$3 = [
     'current_position', 'current_tilt_position',
 ];
 function renderCoverCard(spec) {
@@ -4746,7 +4777,7 @@ function renderCoverCard(spec) {
     const tilt = attrNum(spec, 'current_tilt_position');
     // State label for covers.
     const stateLabel = spec.state.charAt(0).toUpperCase() + spec.state.slice(1);
-    const remaining = attrsExcluding(spec, HANDLED_ATTRS$2);
+    const remaining = attrsExcluding(spec, HANDLED_ATTRS$3);
     return b$1 `
     <div class="entity-card">
       ${renderCardHeader(spec)}
@@ -4778,7 +4809,7 @@ function renderCoverCard(spec) {
 /**
  * Automation / Script entity card — last triggered, state.
  */
-const HANDLED_ATTRS$1 = [
+const HANDLED_ATTRS$2 = [
     'last_triggered', 'current', 'mode', 'id',
 ];
 function renderAutomationCard(spec) {
@@ -4786,7 +4817,7 @@ function renderAutomationCard(spec) {
     const lastTriggered = attrStr(spec, 'last_triggered');
     const mode = attrStr(spec, 'mode');
     const current = attrStr(spec, 'current');
-    const remaining = attrsExcluding(spec, HANDLED_ATTRS$1);
+    const remaining = attrsExcluding(spec, HANDLED_ATTRS$2);
     return b$1 `
     <div class="entity-card">
       ${renderCardHeader(spec)}
@@ -4849,7 +4880,7 @@ function formatRelative(iso) {
 /**
  * Weather entity card — current conditions, temp, humidity, wind.
  */
-const HANDLED_ATTRS = [
+const HANDLED_ATTRS$1 = [
     'temperature', 'humidity', 'pressure', 'wind_speed', 'wind_bearing',
     'visibility', 'forecast', 'apparent_temperature', 'dew_point',
     'cloud_coverage', 'uv_index', 'precipitation_unit', 'pressure_unit',
@@ -4889,7 +4920,7 @@ function renderWeatherCard(spec) {
     const conditionIcon = CONDITION_ICON[spec.state] ?? '󰖐';
     // Human-readable condition label.
     const conditionLabel = spec.state.replace(/-/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
-    const remaining = attrsExcluding(spec, HANDLED_ATTRS);
+    const remaining = attrsExcluding(spec, HANDLED_ATTRS$1);
     return b$1 `
     <div class="entity-card">
       ${renderCardHeader(spec)}
@@ -4958,6 +4989,56 @@ function windDirection(bearing) {
 }
 
 /**
+ * Calendar entity card — shows next event + hint to use events().
+ */
+const HANDLED_ATTRS = [
+    'message', 'description', 'all_day', 'start_time', 'end_time', 'location',
+];
+function renderCalendarCard(spec) {
+    const stateClass = `state-${spec.state_color}`;
+    const message = attrStr(spec, 'message');
+    const description = attrStr(spec, 'description');
+    const startTime = attrStr(spec, 'start_time');
+    const endTime = attrStr(spec, 'end_time');
+    const allDay = attrStr(spec, 'all_day');
+    const location = attrStr(spec, 'location');
+    const remaining = attrsExcluding(spec, HANDLED_ATTRS);
+    return b$1 `
+    <div class="entity-card">
+      ${renderCardHeader(spec)}
+
+      <div class="entity-card-state">
+        <span class="entity-card-state-value ${stateClass}">${spec.state}</span>
+      </div>
+
+      ${message
+        ? b$1 `<div class="entity-calendar-event">
+            <div class="entity-calendar-summary">📅 ${message}</div>
+            ${description && description !== 'None' && description !== ''
+            ? b$1 `<div class="entity-calendar-desc">${description}</div>`
+            : A}
+            ${startTime
+            ? b$1 `<div class="entity-calendar-time">
+                  ${allDay === 'True' ? '🗓 All day' : `🕐 ${startTime}`}${endTime && allDay !== 'True' ? ` → ${endTime}` : A}
+                </div>`
+            : A}
+            ${location && location !== 'None' && location !== ''
+            ? b$1 `<div class="entity-calendar-location">📍 ${location}</div>`
+            : A}
+          </div>`
+        : A}
+
+      <div class="entity-calendar-hint">
+        💡 <code>events("${spec.entity_id}")</code> — see all upcoming events
+      </div>
+
+      ${renderCardMeta(spec)}
+      ${renderAttrsTable(remaining)}
+    </div>
+  `;
+}
+
+/**
  * Entity card renderer dispatcher.
  *
  * Inspects `domain` on the EntityCardSpec and delegates to a
@@ -4988,6 +5069,8 @@ function renderEntityCard(spec) {
             return renderAutomationCard(spec);
         case 'weather':
             return renderWeatherCard(spec);
+        case 'calendar':
+            return renderCalendarCard(spec);
         default:
             return renderGenericCard(spec);
     }
@@ -51981,13 +52064,21 @@ EXAMPLE 4 — "Why did the front door sensor trigger?"
 logbook("binary_sensor.front_door", ago("24h"))
 \`\`\`
 
-EXAMPLE 5 — "What's happening in the bedroom?"
+EXAMPLE 5 — "What's the next waste collection?" or any calendar question
+
+Calendar entities only show one event in state(). Use events() to see all upcoming events:
+
+\`\`\`signal-deck
+events("calendar.my_calendar")
+\`\`\`
+
+EXAMPLE 6 — "What's happening in the bedroom?"
 
 \`\`\`signal-deck
 room("bedroom")
 \`\`\`
 
-EXAMPLE 6 — "What sensors are in the kitchen?"
+EXAMPLE 7 — "What sensors are in the kitchen?"
 
 \`\`\`signal-deck
 matches = [e for e in states("sensor") if "kitchen" in e.entity_id or "kitchen" in e.name.lower()]
@@ -51997,7 +52088,7 @@ show(matches)
 If no results, try different words, or search ALL domains with states() (no argument) instead of just one.
 Always use words the user actually said — they know their own device names.
 
-EXAMPLE 7 — What a good final answer looks like:
+EXAMPLE 8 — What a good final answer looks like:
 
 After running code and getting results, reply like this (plain text, no code block):
 
@@ -52005,7 +52096,7 @@ After running code and getting results, reply like this (plain text, no code blo
 
 Notice: cites entity IDs and actual state values. No guessing. No "I believe" or "it appears." Just data.
 
-EXAMPLE 8 — "How much energy did I use today?"
+EXAMPLE 9 — "How much energy did I use today?"
 
 When results contain numeric data, use a chart — users prefer visual answers.
 Pick the right chart type:
@@ -52047,6 +52138,7 @@ State & Entities:
 History & Diagnostics (call as bare expressions — they auto-render rich displays):
   history("entity_id", hours)       → sparkline or timeline (auto-detected)
   statistics("entity_id", hours, period) → long-term stats ("5minute"/"hour"/"day")
+  events("calendar.entity_id")      → upcoming calendar events (next 14 days)
   logbook("entity_id", hours)       → who/what changed this entity and why
   traces("automation.xyz")          → automation trace (trigger, steps, errors)
   traces()                          → recent traces across all automations
@@ -52440,6 +52532,20 @@ class AnalystSession {
             }
             case 'echarts':
                 return `📊 Chart${spec.title ? `: ${spec.title}` : ''} (rendered as interactive ECharts)`;
+            case 'calendar_events': {
+                const limit = AnalystSession.MAX_TEXT_ROWS;
+                const total = spec.entries.length;
+                const shown = spec.entries.slice(0, limit);
+                const lines = shown.map((e) => {
+                    const time = e.all_day ? 'all-day' : (e.start ?? '');
+                    const loc = e.location ? ` 📍${e.location}` : '';
+                    return `${time}: ${e.summary}${loc}`;
+                }).join('\n');
+                if (total > limit) {
+                    return `📅 ${total} events for ${spec.entity_id}:\n${lines}\n... (${total - limit} more hidden)`;
+                }
+                return `📅 ${total} events for ${spec.entity_id}:\n${lines}`;
+            }
             default:
                 return JSON.stringify(spec);
         }
@@ -54660,6 +54766,147 @@ let SignalDeck = class SignalDeck extends i$1 {
       color: var(--sd-dim);
     }
 
+    /* ── Calendar card ─────────────────────────────────────── */
+
+    .entity-calendar-event {
+      margin: 6px 0;
+      padding: 6px 8px;
+      background: rgba(0, 229, 255, 0.04);
+      border-left: 2px solid var(--sd-accent);
+      border-radius: 2px;
+    }
+
+    .entity-calendar-summary {
+      font-weight: 600;
+      color: var(--sd-fg);
+      font-size: 13px;
+    }
+
+    .entity-calendar-desc {
+      color: var(--sd-dim);
+      font-size: 12px;
+      margin-top: 2px;
+    }
+
+    .entity-calendar-time {
+      color: var(--sd-dim);
+      font-size: 12px;
+      margin-top: 2px;
+    }
+
+    .entity-calendar-location {
+      color: var(--sd-dim);
+      font-size: 12px;
+      margin-top: 2px;
+    }
+
+    .entity-calendar-hint {
+      margin: 8px 0 4px;
+      padding: 4px 8px;
+      font-size: 11px;
+      color: var(--sd-dim);
+      background: rgba(0, 229, 255, 0.04);
+      border-radius: 3px;
+    }
+
+    .entity-calendar-hint code {
+      color: var(--sd-accent);
+      font-family: var(--sd-font, 'Iosevka Nerd Font', monospace);
+      font-size: 11px;
+    }
+
+    /* ── Calendar events (events() display) ──────────────────── */
+
+    .calendar-events-container {
+      margin: 4px 0;
+    }
+
+    .calendar-date-group {
+      margin-bottom: 8px;
+    }
+
+    .calendar-date-header {
+      font-weight: 600;
+      font-size: 13px;
+      color: var(--sd-accent);
+      margin-bottom: 4px;
+      padding: 2px 0;
+      border-bottom: 1px solid rgba(0, 229, 255, 0.15);
+    }
+
+    .calendar-event-row {
+      display: flex;
+      gap: 8px;
+      padding: 4px 0;
+      min-height: 28px;
+    }
+
+    .calendar-event-dot-col {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      width: 16px;
+      flex-shrink: 0;
+    }
+
+    .calendar-event-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      margin-top: 5px;
+      flex-shrink: 0;
+    }
+
+    .calendar-event-dot.dot-allday {
+      background: var(--sd-accent);
+    }
+
+    .calendar-event-dot.dot-timed {
+      background: var(--sd-success);
+    }
+
+    .calendar-event-line {
+      width: 1px;
+      flex: 1;
+      background: rgba(0, 229, 255, 0.12);
+      margin-top: 2px;
+    }
+
+    .calendar-event-body {
+      flex: 1;
+      min-width: 0;
+    }
+
+    .calendar-event-main {
+      display: flex;
+      align-items: baseline;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+
+    .calendar-event-summary {
+      font-weight: 600;
+      font-size: 13px;
+      color: var(--sd-fg);
+    }
+
+    .calendar-event-time {
+      font-size: 12px;
+      color: var(--sd-dim);
+    }
+
+    .calendar-event-desc {
+      font-size: 12px;
+      color: var(--sd-dim);
+      margin-top: 2px;
+    }
+
+    .calendar-event-location {
+      font-size: 12px;
+      color: var(--sd-dim);
+      margin-top: 2px;
+    }
+
     /* State colors */
     .state-success { color: var(--sd-success); }
     .state-error { color: var(--sd-error); }
@@ -55596,6 +55843,8 @@ let SignalDeck = class SignalDeck extends i$1 {
                 return this._renderTraceList(spec);
             case 'echarts':
                 return this._renderECharts(spec);
+            case 'calendar_events':
+                return this._renderCalendarEvents(spec);
             default:
                 return b$1 `<div class="text-output">[unknown spec type]</div>`;
         }
@@ -55863,6 +56112,94 @@ let SignalDeck = class SignalDeck extends i$1 {
         }
         return parts.length > 0 ? parts.join(' ') : null;
     }
+    /** Render a rich calendar events display — upcoming events grouped by date. */
+    _renderCalendarEvents(spec) {
+        const { entries, entity_id } = spec;
+        if (entries.length === 0) {
+            return b$1 `<div class="text-output">No upcoming events for ${entity_id}.</div>`;
+        }
+        // Group events by date.
+        const grouped = new Map();
+        for (const entry of entries) {
+            const dateKey = this._calendarDateKey(entry.start);
+            const list = grouped.get(dateKey) ?? [];
+            list.push(entry);
+            grouped.set(dateKey, list);
+        }
+        return b$1 `
+      <div class="calendar-events-container">
+        ${[...grouped.entries()].map(([dateKey, dayEntries]) => {
+            const dateLabel = this._formatCalendarDate(dateKey);
+            return b$1 `
+            <div class="calendar-date-group">
+              <div class="calendar-date-header">📅 ${dateLabel}</div>
+              ${dayEntries.map((entry) => b$1 `
+                <div class="calendar-event-row">
+                  <div class="calendar-event-dot-col">
+                    <span class="calendar-event-dot ${entry.all_day ? 'dot-allday' : 'dot-timed'}"></span>
+                    <span class="calendar-event-line"></span>
+                  </div>
+                  <div class="calendar-event-body">
+                    <div class="calendar-event-main">
+                      <span class="calendar-event-summary">${entry.summary}</span>
+                      ${entry.all_day
+                ? b$1 `<span class="badge badge-dim">all day</span>`
+                : b$1 `<span class="calendar-event-time">${this._formatCalendarTime(entry.start)}${entry.end ? ` → ${this._formatCalendarTime(entry.end)}` : ''}</span>`}
+                    </div>
+                    ${entry.description
+                ? b$1 `<div class="calendar-event-desc">${entry.description}</div>`
+                : A}
+                    ${entry.location
+                ? b$1 `<div class="calendar-event-location">📍 ${entry.location}</div>`
+                : A}
+                  </div>
+                </div>
+              `)}
+            </div>
+          `;
+        })}
+      </div>
+    `;
+    }
+    /** Extract a date key (YYYY-MM-DD) from an ISO datetime or date string. */
+    _calendarDateKey(dateStr) {
+        if (!dateStr)
+            return 'unknown';
+        return dateStr.slice(0, 10);
+    }
+    /** Format a date key into a friendly label (e.g. "Tue 24 Feb" or "Today"). */
+    _formatCalendarDate(dateKey) {
+        try {
+            const d = new Date(dateKey + 'T00:00:00');
+            const now = new Date();
+            const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+            const target = new Date(d.getFullYear(), d.getMonth(), d.getDate());
+            const diffDays = Math.round((target.getTime() - today.getTime()) / 86400000);
+            if (diffDays === 0)
+                return 'Today';
+            if (diffDays === 1)
+                return 'Tomorrow';
+            const dayName = d.toLocaleDateString('en-GB', { weekday: 'short' });
+            const day = d.getDate();
+            const month = d.toLocaleDateString('en-GB', { month: 'short' });
+            return `${dayName} ${day} ${month}`;
+        }
+        catch {
+            return dateKey;
+        }
+    }
+    /** Format a calendar time from an ISO datetime string. */
+    _formatCalendarTime(dateStr) {
+        if (!dateStr || dateStr.length <= 10)
+            return '';
+        try {
+            const d = new Date(dateStr);
+            return `${d.getHours().toString().padStart(2, '0')}:${d.getMinutes().toString().padStart(2, '0')}`;
+        }
+        catch {
+            return dateStr;
+        }
+    }
     /** Render a rich trace list — automation execution trace cards. */
     _renderTraceList(spec) {
         const { entries } = spec;
@@ -56027,6 +56364,8 @@ let SignalDeck = class SignalDeck extends i$1 {
                 return spec.entries.map((e) => `${e.start}\t${e.automation ?? ''}\t${e.execution ?? e.state}`).join('\n');
             case 'echarts':
                 return `Chart${spec.title ? `: ${spec.title}` : ''} (ECharts — interactive chart rendered in card)`;
+            case 'calendar_events':
+                return spec.entries.map((e) => `${e.start ?? ''}\t${e.summary}${e.location ? `\t${e.location}` : ''}`).join('\n');
             case 'vstack':
                 return spec.children.map((c) => this._specToCopyText(c)).join('\n');
             case 'hstack':

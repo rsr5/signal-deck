@@ -4,7 +4,8 @@ import typescript from '@rollup/plugin-typescript';
 import terser from '@rollup/plugin-terser';
 import replace from '@rollup/plugin-replace';
 import serve from 'rollup-plugin-serve';
-import { copyFileSync, mkdirSync } from 'fs';
+import { copyFileSync, mkdirSync, readFileSync } from 'fs';
+import { createHash } from 'crypto';
 
 const dev = process.env.ROLLUP_WATCH === 'true';
 
@@ -34,6 +35,16 @@ function copyWasm() {
   };
 }
 
+// Compute a short content hash of the WASM binary for cache-busting.
+function wasmHash() {
+  try {
+    const buf = readFileSync('pkg/signal_deck_engine_bg.wasm');
+    return createHash('md5').update(buf).digest('hex').slice(0, 8);
+  } catch (_) {
+    return Date.now().toString(36);
+  }
+}
+
 export default {
   input: 'src/signal-deck.ts',
   output: {
@@ -45,6 +56,7 @@ export default {
     copyWasm(),
     replace({
       'process.env.NODE_ENV': JSON.stringify('production'),
+      '__BUILD_HASH__': JSON.stringify(wasmHash()),
       preventAssignment: true,
     }),
     resolve(),
@@ -57,6 +69,9 @@ export default {
         port: 5050,
         headers: {
           'Access-Control-Allow-Origin': '*',
+          'Cache-Control': 'no-cache, no-store, must-revalidate',
+          'Pragma': 'no-cache',
+          'Expires': '0',
         },
       }),
   ].filter(Boolean),

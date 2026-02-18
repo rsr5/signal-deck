@@ -59,6 +59,8 @@ export async function fulfillHostCall(
       return getServices(hass, params);
     case 'call_service':
       return callService(hass, params);
+    case 'get_events':
+      return getCalendarEvents(hass, params);
     default:
       return { data: JSON.stringify({ error: `Unknown host method: ${method}` }) };
   }
@@ -137,6 +139,54 @@ async function getHistory(
     return { data: JSON.stringify(result) };
   } catch (e) {
     return { data: JSON.stringify({ error: `History fetch failed: ${e}` }) };
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Calendar events — "what events does calendar X have in this time window?"
+// ---------------------------------------------------------------------------
+
+/** Fetch calendar events for an entity over a time period. */
+async function getCalendarEvents(
+  hass: HomeAssistant,
+  params: Record<string, unknown>,
+): Promise<HostCallResult> {
+  const entityId = params.entity_id as string;
+  const hours = (params.hours as number) || 24 * 14; // default 14 days
+
+  const start = new Date(Date.now());
+  const end = new Date(Date.now() + hours * 60 * 60 * 1000);
+
+  const startStr = start.toISOString();
+  const endStr = end.toISOString();
+
+  try {
+    const result = await hass.callApi<Array<{
+      summary: string;
+      start: { dateTime?: string; date?: string };
+      end: { dateTime?: string; date?: string };
+      description?: string;
+      location?: string;
+      uid?: string;
+      recurrence_id?: string;
+      rrule?: string;
+    }>>(
+      'GET',
+      `calendars/${entityId}?start=${encodeURIComponent(startStr)}&end=${encodeURIComponent(endStr)}`,
+    );
+
+    // Flatten start/end to simple strings for easier consumption.
+    const events = (result ?? []).map((ev) => ({
+      summary: ev.summary,
+      start: ev.start?.dateTime ?? ev.start?.date ?? null,
+      end: ev.end?.dateTime ?? ev.end?.date ?? null,
+      description: ev.description ?? null,
+      location: ev.location ?? null,
+    }));
+
+    return { data: JSON.stringify(events) };
+  } catch (e) {
+    return { data: JSON.stringify({ error: `Calendar events fetch failed: ${e}` }) };
   }
 }
 

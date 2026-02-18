@@ -416,6 +416,7 @@ impl ShellEngine {
                 }
             }
             "get_areas" => monty_runtime::json_to_monty_obj(&json_value),
+            "get_events" => monty_runtime::json_to_calendar_event_list(&json_value),
             _ => monty_runtime::json_to_monty_obj(&json_value),
         };
 
@@ -437,7 +438,7 @@ impl ShellEngine {
                 let is_viz_method = matches!(
                     pending.method.as_str(),
                     "get_history" | "get_statistics" | "get_logbook" | "get_services" | "get_datetime"
-                    | "get_trace" | "list_traces"
+                    | "get_trace" | "list_traces" | "get_events"
                 );
                 if is_viz_method {
                     let mut specs = Vec::new();
@@ -450,6 +451,7 @@ impl ShellEngine {
                         "get_datetime" => self.format_datetime_response(json_value),
                         "get_trace" => self.format_traces_response(json_value, &pending.params),
                         "list_traces" => self.format_traces_response(json_value, &pending.params),
+                        "get_events" => self.format_calendar_events_response(json_value, &pending.params),
                         _ => self.format_host_response(json_value),
                     };
                     specs.push(viz);
@@ -747,7 +749,7 @@ impl ShellEngine {
     }
 
     /// Format a MontyObject for show() — rich rendering for EntityState,
-    /// plain text for everything else.
+    /// CalendarEvent, plain text for everything else.
     fn format_monty_show(&self, obj: &MontyObject) -> RenderSpec {
         match obj {
             MontyObject::Dataclass {
@@ -762,10 +764,19 @@ impl ShellEngine {
                         matches!(item, MontyObject::Dataclass { name, .. } if name == "EntityState")
                     });
                 if all_entity_states {
-                    self.format_entity_state_table(items)
-                } else {
-                    RenderSpec::text(format!("{obj}"))
+                    return self.format_entity_state_table(items);
                 }
+
+                // Check if it's a list of CalendarEvent — render as calendar.
+                let all_calendar_events = !items.is_empty()
+                    && items.iter().all(|item| {
+                        matches!(item, MontyObject::Dataclass { name, .. } if name == "CalendarEvent")
+                    });
+                if all_calendar_events {
+                    return self.format_calendar_event_list_from_monty(items);
+                }
+
+                RenderSpec::text(format!("{obj}"))
             }
             other => RenderSpec::text(format!("{other}")),
         }
@@ -1343,6 +1354,123 @@ impl ShellEngine {
         RenderSpec::vstack(vec![
             RenderSpec::summary(summary_text),
             RenderSpec::logbook(entity_id, entries),
+        ])
+    }
+
+    /// Format a calendar events response into a rich calendar display.
+    ///
+    /// Input: JSON array of `{summary, start, end, description?, location?}`.
+    fn format_calendar_events_response(
+        &self,
+        value: serde_json::Value,
+        params: &serde_json::Value,
+    ) -> RenderSpec {
+        let entity_id = params
+            .get("entity_id")
+            .and_then(|v| v.as_str())
+            .unwrap_or("unknown");
+
+        let arr = match value.as_array() {
+            Some(a) => a,
+            None => return RenderSpec::error("Invalid calendar events response format."),
+        };
+
+        if arr.is_empty() {
+            return RenderSpec::text(format!("No upcoming events for {}.", entity_id));
+        }
+
+        use crate::render::CalendarEventEntry;
+
+        let entries: Vec<CalendarEventEntry> = arr
+            .iter()
+            .map(|e| {
+                let start_str = e.get("start").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                let end_str = e.get("end").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                // All-day events have date-only strings (10 chars: "2026-02-24").
+                let all_day = !start_str.is_empty() && start_str.len() <= 10;
+
+                CalendarEventEntry {
+                    summary: e.get("summary").and_then(|v| v.as_str()).unwrap_or("(no title)").to_string(),
+                    start: if start_str.is_empty() { None } else { Some(start_str) },
+                    end: if end_str.is_empty() { None } else { Some(end_str) },
+                    description: e.get("description").and_then(|v| v.as_str()).filter(|s| !s.is_empty()).map(|s| s.to_string()),
+                    location: e.get("location").and_then(|v| v.as_str()).filter(|s| !s.is_empty()).map(|s| s.to_string()),
+                    all_day,
+                }
+            })
+            .collect();
+
+        let count = entries.len();
+        let summary_text = format!("{} upcoming events for {}", count, entity_id);
+
+        RenderSpec::vstack(vec![
+            RenderSpec::summary(summary_text),
+            RenderSpec::calendar_events(entity_id, entries),
+        ])
+    }
+
+    /// Format a list of CalendarEvent Monty dataclasses into a rich calendar display.
+    /// Used by show() when it detects a list of CalendarEvent objects.
+    fn format_calendar_event_list_from_monty(&self, items: &[MontyObject]) -> RenderSpec {
+        use crate::render::CalendarEventEntry;
+
+        let get_str = |attrs: &monty::DictPairs, key: &str| -> String {
+            for (k, v) in attrs {
+                if let MontyObject::String(k_str) = k {
+                    if k_str == key {
+                        if let MontyObject::String(s) = v {
+                            return s.clone();
+                        }
+                    }
+                }
+            }
+            String::new()
+        };
+
+        let get_bool = |attrs: &monty::DictPairs, key: &str| -> bool {
+            for (k, v) in attrs {
+                if let MontyObject::String(k_str) = k {
+                    if k_str == key {
+                        if let MontyObject::Bool(b) = v {
+                            return *b;
+                        }
+                    }
+                }
+            }
+            false
+        };
+
+        let entries: Vec<CalendarEventEntry> = items
+            .iter()
+            .filter_map(|item| {
+                if let MontyObject::Dataclass { attrs, .. } = item {
+                    let summary = get_str(attrs, "summary");
+                    let start = get_str(attrs, "start");
+                    let end = get_str(attrs, "end");
+                    let description = get_str(attrs, "description");
+                    let location = get_str(attrs, "location");
+                    let all_day = get_bool(attrs, "all_day");
+
+                    Some(CalendarEventEntry {
+                        summary: if summary.is_empty() { "(no title)".to_string() } else { summary },
+                        start: if start.is_empty() { None } else { Some(start) },
+                        end: if end.is_empty() { None } else { Some(end) },
+                        description: if description.is_empty() { None } else { Some(description) },
+                        location: if location.is_empty() { None } else { Some(location) },
+                        all_day,
+                    })
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        let count = entries.len();
+        let summary_text = format!("{} calendar events", count);
+
+        RenderSpec::vstack(vec![
+            RenderSpec::summary(summary_text),
+            RenderSpec::calendar_events("calendar", entries),
         ])
     }
 
