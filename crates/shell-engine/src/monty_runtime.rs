@@ -1,191 +1,421 @@
-//! Monty Python runtime wrapper for Signal Deck.
+//! Monty Python runtime — REPL lifecycle, host call mapping, and data conversion.
 //!
-//! Wraps `pydantic/monty` to execute user Python snippets in a sandboxed
-//! interpreter. External functions (`state`, `states`, etc.) pause
-//! execution and return control to the host so TypeScript can fulfill the
-//! request via the HA WebSocket API.
+//! This module wraps Monty's `MontyRepl` to provide a stateful REPL that
+//! persists variables across snippets without replaying previous code.
+//!
+//! ## Two execution paths
+//!
+//! - **`feed()`** borrows `&mut self`.  The REPL is never consumed, so it
+//!   survives even on runtime errors.  Returns expression values directly.
+//!   Cannot handle external function calls (they require VM suspension).
+//!
+//! - **`start()`** consumes `self` and returns `ReplProgress`, which can
+//!   suspend at external calls (`FunctionCall`) or report runtime errors
+//!   (`Error`) — both variants return the REPL so session state is
+//!   preserved.  `Err(MontyException)` is only returned for syntax/compile
+//!   errors (before execution starts).
+//!
+//! The engine tries `feed()` first.  If the snippet calls an external
+//! function, `feed()` returns a "not implemented" error — the engine
+//! then retries with `start()`.
 
 use monty::{
-    CollectStringPrint, DictPairs, ExternalResult, MontyException, MontyObject, MontyRun,
-    NoLimitTracker, RunProgress, Snapshot,
+    ExternalResult, MontyException, MontyObject, MontyRepl, NoLimitTracker, PrintWriter,
+    ReplProgress, ReplSnapshot,
 };
 
-/// External function names exposed to Python code.
-/// The HA context is implied — no `ha_` prefix needed.
-const HA_EXTERNAL_FUNCTIONS: &[&str] = &[
+// ---------------------------------------------------------------------------
+// External function registry
+// ---------------------------------------------------------------------------
+
+/// Names of all external functions available to user Python code.
+///
+/// These are registered with Monty at REPL init time. When user code calls
+/// one of these, Monty suspends execution and returns a `ReplProgress::FunctionCall`.
+pub const HA_EXTERNAL_FUNCTIONS: &[&str] = &[
+    // State — short aliases (user-facing API)
     "state",
     "states",
+    // State — long names
+    "get_state",
+    "get_states",
+    // History & statistics — short aliases
     "history",
     "statistics",
+    // History & statistics — long names
+    "get_history",
+    "get_statistics",
+    // Services
     "call_service",
-    "show",
-    "room",
-    "rooms",
+    "get_services",
+    // Areas
+    "get_areas",
+    "get_area_entities",
+    // Time
     "ago",
-    "logbook",
-    "template",
-    "traces",
-    "devices",
-    "entities",
-    "check_config",
-    "error_log",
-    "now",
-    "services",
+    "get_datetime",
+    // Display
+    "show",
+    // Logbook
+    "get_logbook",
+    // Traces
+    "get_trace",
+    "list_traces",
+    // Charting
     "plot_line",
     "plot_bar",
     "plot_pie",
     "plot_series",
 ];
 
-/// Result of evaluating a Python snippet.
-pub enum MontyEvalResult {
-    /// Execution completed — return the output and optional result value.
+// ---------------------------------------------------------------------------
+// REPL lifecycle
+// ---------------------------------------------------------------------------
+
+/// Outcome of a REPL snippet evaluation or snapshot resume.
+pub enum ReplEvalResult {
+    /// Snippet completed — value and captured print output.
+    /// The REPL is returned so it can be stored back in the session.
     Complete {
-        /// Captured print() output.
+        repl: MontyRepl<NoLimitTracker>,
         output: String,
-        /// The final expression value (None is suppressed).
-        result: Option<MontyObject>,
+        value: Option<MontyObject>,
     },
-    /// Execution paused at an external function call — we need TS to fulfill it.
+    /// Snippet suspended at an external function call.
     HostCallNeeded {
-        /// Captured print() output so far.
         output: String,
-        /// Which function was called.
         function_name: String,
-        /// Positional arguments as JSON-compatible strings.
         args: Vec<MontyObject>,
-        /// The frozen execution state to resume later.
-        snapshot: Snapshot<NoLimitTracker>,
+        snapshot: ReplSnapshot<NoLimitTracker>,
     },
-    /// Parse or runtime error.
-    Error(String),
+    /// Snippet failed with an error.
+    /// The REPL is always returned — runtime errors preserve session state
+    /// via `ReplProgress::Error`.  `repl: None` only occurs on syntax/compile
+    /// errors during `start()` (before execution began).
+    Error {
+        message: String,
+        repl: Option<MontyRepl<NoLimitTracker>>,
+    },
 }
 
-/// Execute a Python code snippet using Monty.
+/// Initialise a fresh Monty REPL session.
 ///
-/// If `context` is non-empty, it is prepended to `code` so that variables
-/// and functions defined in earlier REPL lines are visible. Print output
-/// produced by the context prefix is stripped from the result.
+/// The `init_code` is compiled and executed once to set up the REPL state.
+/// Pass an empty string for a blank session.
+pub fn init_repl(init_code: &str) -> Result<MontyRepl<NoLimitTracker>, String> {
+    let ext_fn_names: Vec<String> = HA_EXTERNAL_FUNCTIONS.iter().map(|s| s.to_string()).collect();
+    let mut print = PrintWriter::Collect(String::new());
+    let (repl, _init_value) = MontyRepl::new(
+        init_code.to_owned(),
+        "<signal-deck>",
+        vec![],          // no input names
+        ext_fn_names,
+        vec![],          // no input values
+        NoLimitTracker,
+        &mut print,
+    )
+    .map_err(|e| format_monty_error(&e))?;
+    Ok(repl)
+}
+
+/// Execute a snippet using `feed()` — borrows the REPL.
 ///
-/// If `last_result` is provided, it is passed as the `_` input variable
-/// so that the previous result is available with full type fidelity
-/// (dataclasses retain dot-access, no serialization).
+/// `feed()` takes `&mut self` so the REPL is **never lost**, even on
+/// runtime errors.  It returns the expression value directly.
 ///
-/// Returns a `MontyEvalResult` indicating whether execution completed,
-/// paused at an external function, or failed.
-pub fn eval_python(context: &str, code: &str, last_result: Option<&MontyObject>) -> MontyEvalResult {
-    // Build the full script: context prefix (if any) + new code.
-    let full_code = if context.is_empty() {
-        code.to_owned()
+/// The one thing `feed()` cannot do is handle external function calls.
+/// If the snippet calls `state()`, `show()`, etc., `feed()` returns an
+/// error containing "not implemented with standard execution".  The
+/// caller should detect this and retry with `start_snippet()`.
+pub fn feed_snippet(
+    repl: &mut MontyRepl<NoLimitTracker>,
+    code: &str,
+) -> Result<(String, Option<MontyObject>), String> {
+    let mut print = PrintWriter::Collect(String::new());
+    let value = repl.feed(code, &mut print).map_err(|e| format_monty_error(&e))?;
+    let output = print.collected_output().unwrap_or("").to_owned();
+    let val = if value == MontyObject::None {
+        None
     } else {
-        format!("{context}\n{code}")
+        Some(value)
     };
-
-    // Build input_names and input_values for the `_` variable.
-    let mut input_names: Vec<String> = Vec::new();
-    let mut input_values: Vec<MontyObject> = Vec::new();
-    if let Some(obj) = last_result {
-        input_names.push("_".to_string());
-        input_values.push(obj.clone());
-    }
-
-    // Parse the code.
-    let ext_fns: Vec<String> = HA_EXTERNAL_FUNCTIONS.iter().map(|s| s.to_string()).collect();
-    let runner = match MontyRun::new(full_code, "signal-deck.py", input_names.clone(), ext_fns) {
-        Ok(r) => r,
-        Err(e) => return MontyEvalResult::Error(format_monty_error(&e)),
-    };
-
-    // If we have context, run it once first just to measure its print output length.
-    // Then run the full script and strip the prefix output.
-    let context_output_len = if !context.is_empty() {
-        measure_context_output(context, last_result)
-    } else {
-        0
-    };
-
-    let mut print_buf = CollectStringPrint::new();
-    let progress = match runner.start(input_values, NoLimitTracker, &mut print_buf) {
-        Ok(p) => p,
-        Err(e) => return MontyEvalResult::Error(format_monty_error(&e)),
-    };
-
-    let full_output = print_buf.into_output();
-    // Strip the context prefix output — only show what the new code printed.
-    let output = strip_context_output(&full_output, context_output_len);
-    finish_progress(progress, output)
+    Ok((output, val))
 }
 
-/// Resume a paused Monty execution with the result of an external function call.
-pub fn resume_with_result(
-    snapshot: Snapshot<NoLimitTracker>,
-    result: ExternalResult,
-) -> MontyEvalResult {
-    let mut print_buf = CollectStringPrint::new();
-    let progress = match snapshot.run(result, &mut print_buf) {
-        Ok(p) => p,
-        Err(e) => return MontyEvalResult::Error(format_monty_error(&e)),
-    };
-
-    let output = print_buf.into_output();
-    finish_progress(progress, output)
-}
-
-/// Process a RunProgress to completion or pause.
-fn finish_progress(
-    progress: RunProgress<NoLimitTracker>,
-    output: String,
-) -> MontyEvalResult {
-    loop {
-        match progress {
-            RunProgress::Complete(value) => {
-                let result = match &value {
-                    MontyObject::None => None,
-                    _ => Some(value),
-                };
-                return MontyEvalResult::Complete {
-                    output,
-                    result,
-                };
-            }
-            RunProgress::FunctionCall {
-                function_name,
-                args,
-                state,
-                ..
-            } => {
-                return MontyEvalResult::HostCallNeeded {
-                    output,
-                    function_name,
-                    args,
-                    snapshot: state,
-                };
-            }
-            RunProgress::ResolveFutures(_) => {
-                return MontyEvalResult::Error(
-                    "Async operations are not supported in Signal Deck.".to_string(),
-                );
-            }
-            RunProgress::OsCall { .. } => {
-                return MontyEvalResult::Error(
-                    "OS/filesystem operations are not supported in Signal Deck.".to_string(),
-                );
+/// Execute a snippet using `start()` — consumes the REPL.
+///
+/// Required when the snippet calls external functions (`state()`, `show()`,
+/// etc.), because only `start()` can suspend at those calls.
+///
+/// With the exceptions branch, `start()` returns `ReplProgress::Error`
+/// (with the REPL preserved) on runtime errors.  `Err(MontyException)` is
+/// only returned for syntax/compile errors before execution begins — in
+/// that case the REPL is consumed and must be re-created.
+pub fn start_snippet(repl: MontyRepl<NoLimitTracker>, code: &str) -> ReplEvalResult {
+    let mut print = PrintWriter::Collect(String::new());
+    let progress = repl.start(code, &mut print);
+    let output = print.collected_output().unwrap_or("").to_owned();
+    match progress {
+        Ok(prog) => finish_repl_progress(prog, output),
+        Err(e) => {
+            // Syntax/compile error — REPL was consumed, snippet never ran.
+            ReplEvalResult::Error {
+                message: format_monty_error(&e),
+                repl: None,
             }
         }
     }
 }
 
-/// Convert MontyObject to a serde_json::Value for use in host call params.
+/// Resume a suspended REPL execution with an external result.
+pub fn resume_snapshot(
+    snapshot: ReplSnapshot<NoLimitTracker>,
+    result: ExternalResult,
+) -> ReplEvalResult {
+    let mut print = PrintWriter::Collect(String::new());
+    let progress = snapshot.run(result, &mut print);
+    let output = print.collected_output().unwrap_or("").to_owned();
+    match progress {
+        Ok(prog) => finish_repl_progress(prog, output),
+        Err(e) => {
+            // Should not happen with the exceptions branch — runtime errors
+            // come back as ReplProgress::Error.  But handle defensively.
+            ReplEvalResult::Error {
+                message: format_monty_error(&e),
+                repl: None,
+            }
+        }
+    }
+}
+
+/// Convert a `ReplProgress` into our `ReplEvalResult`.
+fn finish_repl_progress(
+    progress: ReplProgress<NoLimitTracker>,
+    output: String,
+) -> ReplEvalResult {
+    match progress {
+        ReplProgress::Complete { repl, value } => {
+            let val = if value == MontyObject::None {
+                None
+            } else {
+                Some(value)
+            };
+            ReplEvalResult::Complete { repl, output, value: val }
+        }
+        ReplProgress::FunctionCall {
+            function_name,
+            args,
+            state,
+            ..
+        } => ReplEvalResult::HostCallNeeded {
+            output,
+            function_name,
+            args,
+            snapshot: state,
+        },
+        ReplProgress::Error { repl, error } => ReplEvalResult::Error {
+            message: format_monty_error(&error),
+            repl: Some(repl),
+        },
+        ReplProgress::OsCall { .. } => ReplEvalResult::Error {
+            message: "OS calls are not supported in Signal Deck.".to_string(),
+            repl: None,
+        },
+        ReplProgress::ResolveFutures(_) => ReplEvalResult::Error {
+            message: "Async futures are not supported in Signal Deck.".to_string(),
+            repl: None,
+        },
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Host call mapping
+// ---------------------------------------------------------------------------
+
+/// Map an external function call from Monty to a host call method + params.
+///
+/// Returns `None` for functions that are handled locally (show, ago, charts).
+pub fn map_ext_call_to_host_call(
+    function_name: &str,
+    args: &[MontyObject],
+) -> Option<(&'static str, serde_json::Value)> {
+    match function_name {
+        "state" | "get_state" => {
+            let entity_id = args.first().and_then(|a| {
+                if let MontyObject::String(s) = a {
+                    Some(s.as_str())
+                } else {
+                    None
+                }
+            })?;
+            Some(("get_state", serde_json::json!({ "entity_id": entity_id })))
+        }
+        "states" | "get_states" => {
+            let domain = args.first().and_then(|a| {
+                if let MontyObject::String(s) = a {
+                    Some(s.clone())
+                } else {
+                    None
+                }
+            });
+            let params = match domain {
+                Some(d) => serde_json::json!({ "domain": d }),
+                None => serde_json::json!({}),
+            };
+            Some(("get_states", params))
+        }
+        "history" | "get_history" => {
+            let entity_id = args.first().and_then(|a| {
+                if let MontyObject::String(s) = a {
+                    Some(s.as_str())
+                } else {
+                    None
+                }
+            })?;
+            // Second arg can be hours (int/float) or an ISO timestamp string from ago().
+            match args.get(1) {
+                Some(MontyObject::String(s)) => {
+                    Some(("get_history", serde_json::json!({
+                        "entity_id": entity_id,
+                        "start_time": s,
+                    })))
+                }
+                Some(MontyObject::Int(n)) => {
+                    Some(("get_history", serde_json::json!({
+                        "entity_id": entity_id,
+                        "hours": *n as f64,
+                    })))
+                }
+                Some(MontyObject::Float(f)) => {
+                    Some(("get_history", serde_json::json!({
+                        "entity_id": entity_id,
+                        "hours": f,
+                    })))
+                }
+                _ => {
+                    Some(("get_history", serde_json::json!({
+                        "entity_id": entity_id,
+                        "hours": 6.0,
+                    })))
+                }
+            }
+        }
+        "statistics" | "get_statistics" => {
+            let entity_id = args.first().and_then(|a| {
+                if let MontyObject::String(s) = a {
+                    Some(s.as_str())
+                } else {
+                    None
+                }
+            })?;
+            let period = args.get(1).and_then(|a| {
+                if let MontyObject::String(s) = a {
+                    Some(s.as_str())
+                } else {
+                    None
+                }
+            }).unwrap_or("hour");
+            Some(("get_statistics", serde_json::json!({
+                "entity_id": entity_id,
+                "period": period,
+            })))
+        }
+        "call_service" => {
+            let domain = args.first().and_then(|a| {
+                if let MontyObject::String(s) = a { Some(s.as_str()) } else { None }
+            })?;
+            let service = args.get(1).and_then(|a| {
+                if let MontyObject::String(s) = a { Some(s.as_str()) } else { None }
+            })?;
+            let data = args.get(2).map(|a| monty_obj_to_json(a)).unwrap_or(serde_json::json!({}));
+            Some(("call_service", serde_json::json!({
+                "domain": domain,
+                "service": service,
+                "service_data": data,
+            })))
+        }
+        "get_services" => {
+            let domain = args.first().and_then(|a| {
+                if let MontyObject::String(s) = a { Some(s.clone()) } else { None }
+            });
+            let params = match domain {
+                Some(d) => serde_json::json!({ "domain": d }),
+                None => serde_json::json!({}),
+            };
+            Some(("get_services", params))
+        }
+        "get_areas" => {
+            Some(("get_areas", serde_json::json!({})))
+        }
+        "get_area_entities" => {
+            let area_id = args.first().and_then(|a| {
+                if let MontyObject::String(s) = a { Some(s.as_str()) } else { None }
+            })?;
+            Some(("get_area_entities", serde_json::json!({ "area_id": area_id })))
+        }
+        "get_datetime" => {
+            Some(("get_datetime", serde_json::json!({})))
+        }
+        "get_logbook" => {
+            let entity_id = args.first().and_then(|a| {
+                if let MontyObject::String(s) = a { Some(s.as_str()) } else { None }
+            });
+            let hours = args.get(1).and_then(|a| match a {
+                MontyObject::Int(n) => Some(*n as f64),
+                MontyObject::Float(f) => Some(*f),
+                _ => None,
+            }).unwrap_or(24.0);
+            let mut params = serde_json::json!({ "hours": hours });
+            if let Some(eid) = entity_id {
+                params["entity_id"] = serde_json::json!(eid);
+            }
+            Some(("get_logbook", params))
+        }
+        "get_trace" => {
+            let automation_id = args.first().and_then(|a| {
+                if let MontyObject::String(s) = a { Some(s.as_str()) } else { None }
+            })?;
+            let run_id = args.get(1).and_then(|a| {
+                if let MontyObject::String(s) = a { Some(s.clone()) } else { None }
+            });
+            let mut params = serde_json::json!({ "automation_id": automation_id });
+            if let Some(rid) = run_id {
+                params["run_id"] = serde_json::json!(rid);
+            }
+            Some(("get_trace", params))
+        }
+        "list_traces" => {
+            let domain = args.first().and_then(|a| {
+                if let MontyObject::String(s) = a { Some(s.clone()) } else { None }
+            });
+            let params = match domain {
+                Some(d) => serde_json::json!({ "domain": d }),
+                None => serde_json::json!({ "domain": "automation" }),
+            };
+            Some(("list_traces", params))
+        }
+        // show, ago, plot_* are handled locally by the engine — not host calls.
+        _ => None,
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Data conversion: MontyObject ↔ JSON
+// ---------------------------------------------------------------------------
+
+/// Convert a MontyObject to a serde_json::Value.
 pub fn monty_obj_to_json(obj: &MontyObject) -> serde_json::Value {
     match obj {
         MontyObject::None => serde_json::Value::Null,
         MontyObject::Bool(b) => serde_json::Value::Bool(*b),
-        MontyObject::Int(n) => serde_json::json!(*n),
-        MontyObject::Float(f) => serde_json::json!(*f),
+        MontyObject::Int(n) => serde_json::json!(n),
+        MontyObject::Float(f) => serde_json::json!(f),
         MontyObject::String(s) => serde_json::Value::String(s.clone()),
         MontyObject::List(items) => {
-            let arr: Vec<serde_json::Value> = items.iter().map(monty_obj_to_json).collect();
-            serde_json::Value::Array(arr)
+            serde_json::Value::Array(items.iter().map(monty_obj_to_json).collect())
+        }
+        MontyObject::Tuple(items) => {
+            serde_json::Value::Array(items.iter().map(monty_obj_to_json).collect())
         }
         MontyObject::Dict(pairs) => {
             let mut map = serde_json::Map::new();
@@ -198,15 +428,33 @@ pub fn monty_obj_to_json(obj: &MontyObject) -> serde_json::Value {
             }
             serde_json::Value::Object(map)
         }
-        MontyObject::Tuple(items) => {
-            let arr: Vec<serde_json::Value> = items.iter().map(monty_obj_to_json).collect();
-            serde_json::Value::Array(arr)
+        MontyObject::Set(items) => {
+            serde_json::Value::Array(items.iter().map(monty_obj_to_json).collect())
         }
+        MontyObject::FrozenSet(items) => {
+            serde_json::Value::Array(items.iter().map(monty_obj_to_json).collect())
+        }
+        MontyObject::Bytes(b) => {
+            serde_json::Value::String(format!("b\"{}\"", String::from_utf8_lossy(b)))
+        }
+        MontyObject::Dataclass { name, attrs, .. } => {
+            let mut map = serde_json::Map::new();
+            map.insert("__type__".to_string(), serde_json::json!(name));
+            for (k, v) in attrs {
+                let key = match k {
+                    MontyObject::String(s) => s.clone(),
+                    other => format!("{other}"),
+                };
+                map.insert(key, monty_obj_to_json(v));
+            }
+            serde_json::Value::Object(map)
+        }
+        // Catch-all for new variants (Ellipsis, BigInt, NamedTuple, Exception, Type, etc.)
         other => serde_json::Value::String(format!("{other}")),
     }
 }
 
-/// Convert a serde_json::Value back to a MontyObject for resuming execution.
+/// Convert a JSON value to a MontyObject.
 pub fn json_to_monty_obj(value: &serde_json::Value) -> MontyObject {
     match value {
         serde_json::Value::Null => MontyObject::None,
@@ -222,255 +470,19 @@ pub fn json_to_monty_obj(value: &serde_json::Value) -> MontyObject {
         }
         serde_json::Value::String(s) => MontyObject::String(s.clone()),
         serde_json::Value::Array(arr) => {
-            let items: Vec<MontyObject> = arr.iter().map(json_to_monty_obj).collect();
-            MontyObject::List(items)
+            MontyObject::List(arr.iter().map(json_to_monty_obj).collect())
         }
         serde_json::Value::Object(map) => {
             let pairs: Vec<(MontyObject, MontyObject)> = map
                 .iter()
                 .map(|(k, v)| (MontyObject::String(k.clone()), json_to_monty_obj(v)))
                 .collect();
-            MontyObject::Dict(monty::DictPairs::from(pairs))
+            MontyObject::Dict(pairs.into())
         }
     }
 }
 
-/// Format a MontyException into a user-friendly error string.
-fn format_monty_error(e: &MontyException) -> String {
-    format!("{e}")
-}
-
-/// Run context code in isolation to measure how many bytes of print output it produces.
-/// This lets us strip the prefix output when running context + new code together.
-fn measure_context_output(context: &str, last_result: Option<&MontyObject>) -> usize {
-    // Build same input_names/values as the real eval so context code can reference `_`.
-    let mut input_names: Vec<String> = Vec::new();
-    let mut input_values: Vec<MontyObject> = Vec::new();
-    if let Some(obj) = last_result {
-        input_names.push("_".to_string());
-        input_values.push(obj.clone());
-    }
-
-    let ext_fns: Vec<String> = HA_EXTERNAL_FUNCTIONS.iter().map(|s| s.to_string()).collect();
-    let runner = match MontyRun::new(context.to_owned(), "signal-deck.py", input_names, ext_fns) {
-        Ok(r) => r,
-        Err(_) => return 0,
-    };
-    let mut print_buf = CollectStringPrint::new();
-    match runner.start(input_values, NoLimitTracker, &mut print_buf) {
-        Ok(_) => print_buf.into_output().len(),
-        Err(_) => 0,
-    }
-}
-
-/// Strip context prefix output from the full output.
-/// Uses byte offset measured by `measure_context_output`.
-fn strip_context_output(full_output: &str, context_output_len: usize) -> String {
-    if context_output_len == 0 || context_output_len >= full_output.len() {
-        return full_output.to_string();
-    }
-    full_output[context_output_len..].to_string()
-}
-
-/// Map an external function call to the appropriate HA host call method + params.
-pub fn map_ext_call_to_host_call(
-    function_name: &str,
-    args: &[MontyObject],
-) -> Option<(&'static str, serde_json::Value)> {
-    match function_name {
-        "state" => {
-            // state("sensor.temp") → get_state
-            let entity_id = args.first().map(|a| match a {
-                MontyObject::String(s) => s.clone(),
-                other => format!("{other}"),
-            }).unwrap_or_default();
-            Some(("get_state", serde_json::json!({ "entity_id": entity_id })))
-        }
-        "states" => {
-            // states() or states("sensor") → get_states
-            let domain = args.first().and_then(|a| match a {
-                MontyObject::String(s) => Some(s.clone()),
-                _ => None,
-            });
-            let params = match domain {
-                Some(d) => serde_json::json!({ "domain": d }),
-                None => serde_json::json!({}),
-            };
-            Some(("get_states", params))
-        }
-        "history" => {
-            // history("sensor.temp", 6) → get_history
-            let entity_id = args.first().map(|a| match a {
-                MontyObject::String(s) => s.clone(),
-                other => format!("{other}"),
-            }).unwrap_or_default();
-            let hours = args.get(1).and_then(|a| match a {
-                MontyObject::Int(n) => Some(*n),
-                MontyObject::Float(f) => Some(*f as i64),
-                _ => None,
-            }).unwrap_or(6);
-            Some(("get_history", serde_json::json!({
-                "entity_id": entity_id,
-                "hours": hours,
-            })))
-        }
-        "call_service" => {
-            // call_service("light", "turn_on", {"entity_id": "light.kitchen"})
-            let domain = args.first().map(|a| match a {
-                MontyObject::String(s) => s.clone(),
-                other => format!("{other}"),
-            }).unwrap_or_default();
-            let service = args.get(1).map(|a| match a {
-                MontyObject::String(s) => s.clone(),
-                other => format!("{other}"),
-            }).unwrap_or_default();
-            let data = args.get(2).map(monty_obj_to_json).unwrap_or(serde_json::json!({}));
-            Some(("call_service", serde_json::json!({
-                "domain": domain,
-                "service": service,
-                "service_data": data,
-            })))
-        }
-        "show" => {
-            // show() is handled locally, not a host call.
-            None
-        }
-        "room" => {
-            // room("Living Room") → get_area_entities
-            let area = args.first().map(|a| match a {
-                MontyObject::String(s) => s.clone(),
-                other => format!("{other}"),
-            }).unwrap_or_default();
-            Some(("get_area_entities", serde_json::json!({ "area": area })))
-        }
-        "rooms" => {
-            // rooms() → get_areas (list all areas)
-            Some(("get_areas", serde_json::json!({})))
-        }
-        "statistics" => {
-            // statistics("sensor.temp", hours=24, period="hour") → get_statistics
-            let entity_id = args.first().map(|a| match a {
-                MontyObject::String(s) => s.clone(),
-                other => format!("{other}"),
-            }).unwrap_or_default();
-            let hours = args.get(1).and_then(|a| match a {
-                MontyObject::Int(n) => Some(*n),
-                MontyObject::Float(f) => Some(*f as i64),
-                _ => None,
-            }).unwrap_or(24);
-            let period = args.get(2).and_then(|a| match a {
-                MontyObject::String(s) => Some(s.clone()),
-                _ => None,
-            }).unwrap_or_else(|| {
-                // Auto-select period based on hours.
-                if hours <= 6 { "5minute".to_string() }
-                else if hours <= 72 { "hour".to_string() }
-                else { "day".to_string() }
-            });
-            Some(("get_statistics", serde_json::json!({
-                "entity_id": entity_id,
-                "hours": hours,
-                "period": period,
-            })))
-        }
-        "ago" => {
-            // ago() is handled locally by the engine, not a host call.
-            None
-        }
-        "logbook" => {
-            // logbook("entity_id", hours=6) → get_logbook
-            let entity_id = args.first().map(|a| match a {
-                MontyObject::String(s) => s.clone(),
-                other => format!("{other}"),
-            }).unwrap_or_default();
-            let hours = args.get(1).and_then(|a| match a {
-                MontyObject::Int(n) => Some(*n),
-                MontyObject::Float(f) => Some(*f as i64),
-                _ => None,
-            }).unwrap_or(6);
-            Some(("get_logbook", serde_json::json!({
-                "entity_id": entity_id,
-                "hours": hours,
-            })))
-        }
-        "template" => {
-            // template("{{ states('sensor.temp') }}") → render_template
-            let tpl = args.first().map(|a| match a {
-                MontyObject::String(s) => s.clone(),
-                other => format!("{other}"),
-            }).unwrap_or_default();
-            Some(("render_template", serde_json::json!({
-                "template": tpl,
-            })))
-        }
-        "traces" => {
-            // traces("automation.xyz") → get_traces
-            // traces() → list all recent traces
-            let automation_id = args.first().and_then(|a| match a {
-                MontyObject::String(s) => Some(s.clone()),
-                _ => None,
-            });
-            match automation_id {
-                Some(id) => Some(("get_trace", serde_json::json!({ "automation_id": id }))),
-                None => Some(("list_traces", serde_json::json!({}))),
-            }
-        }
-        "devices" => {
-            // devices() → list all devices
-            // devices("keyword") → search devices
-            let query = args.first().and_then(|a| match a {
-                MontyObject::String(s) => Some(s.clone()),
-                _ => None,
-            });
-            match query {
-                Some(q) => Some(("get_devices", serde_json::json!({ "query": q }))),
-                None => Some(("get_devices", serde_json::json!({}))),
-            }
-        }
-        "entities" => {
-            // entities("entity_id") → get entity registry entry (integration, device, platform)
-            let entity_id = args.first().map(|a| match a {
-                MontyObject::String(s) => s.clone(),
-                other => format!("{other}"),
-            }).unwrap_or_default();
-            Some(("get_entity_entry", serde_json::json!({ "entity_id": entity_id })))
-        }
-        "check_config" => {
-            // check_config() → validate HA configuration
-            Some(("check_config", serde_json::json!({})))
-        }
-        "error_log" => {
-            // error_log() → fetch HA error log
-            Some(("get_error_log", serde_json::json!({})))
-        }
-        "now" => {
-            // now() → get current date/time from the browser
-            Some(("get_datetime", serde_json::json!({})))
-        }
-        "services" => {
-            // services() → list all available services
-            // services("domain") → list services for a specific domain
-            let domain = args.first().and_then(|a| match a {
-                MontyObject::String(s) => Some(s.clone()),
-                _ => None,
-            });
-            match domain {
-                Some(d) => Some(("get_services", serde_json::json!({ "domain": d }))),
-                None => Some(("get_services", serde_json::json!({}))),
-            }
-        }
-        // Chart functions are handled locally by the engine, not host calls.
-        "plot_line" | "plot_bar" | "plot_pie" | "plot_series" => None,
-        _ => None,
-    }
-}
-
-/// Convert a single HA entity JSON to a `MontyObject::Dataclass` named `EntityState`.
-///
-/// Fields: entity_id, state, attributes, last_changed, last_updated,
-///         domain, object_id, name, is_on, is_off
-///
-/// The dataclass is frozen (immutable) and has no methods.
+/// Convert a HA state JSON object to an EntityState dataclass.
 pub fn json_to_entity_state(value: &serde_json::Value) -> MontyObject {
     let entity_id = value
         .get("entity_id")
@@ -480,7 +492,7 @@ pub fn json_to_entity_state(value: &serde_json::Value) -> MontyObject {
     let state = value
         .get("state")
         .and_then(|v| v.as_str())
-        .unwrap_or("")
+        .unwrap_or("unknown")
         .to_string();
     let last_changed = value
         .get("last_changed")
@@ -493,13 +505,12 @@ pub fn json_to_entity_state(value: &serde_json::Value) -> MontyObject {
         .unwrap_or("")
         .to_string();
 
-    // Derive domain and object_id from entity_id.
-    let (domain, object_id) = entity_id
-        .split_once('.')
-        .map(|(d, o)| (d.to_string(), o.to_string()))
-        .unwrap_or_else(|| (String::new(), entity_id.clone()));
+    let domain = entity_id
+        .split('.')
+        .next()
+        .unwrap_or("")
+        .to_string();
 
-    // Extract friendly_name for the `name` field.
     let friendly_name = value
         .get("attributes")
         .and_then(|a| a.get("friendly_name"))
@@ -507,304 +518,182 @@ pub fn json_to_entity_state(value: &serde_json::Value) -> MontyObject {
         .unwrap_or(&entity_id)
         .to_string();
 
-    // is_on / is_off
     let is_on = matches!(state.as_str(), "on" | "home" | "open" | "playing" | "active");
-    let is_off = matches!(state.as_str(), "off" | "not_home" | "closed" | "idle" | "paused" | "standby");
 
-    // Convert attributes to a MontyObject::Dict.
     let attributes = value
         .get("attributes")
         .cloned()
-        .unwrap_or(serde_json::Value::Object(serde_json::Map::new()));
-    let attrs_obj = json_to_monty_obj(&attributes);
-
-    // Build the field_names in a stable order.
-    let field_names = vec![
-        "entity_id".into(),
-        "state".into(),
-        "attributes".into(),
-        "last_changed".into(),
-        "last_updated".into(),
-        "domain".into(),
-        "object_id".into(),
-        "name".into(),
-        "is_on".into(),
-        "is_off".into(),
-    ];
-
-    // Build attrs as DictPairs.
-    let pairs: Vec<(MontyObject, MontyObject)> = vec![
-        (MontyObject::String("entity_id".into()), MontyObject::String(entity_id)),
-        (MontyObject::String("state".into()), MontyObject::String(state)),
-        (MontyObject::String("attributes".into()), attrs_obj),
-        (MontyObject::String("last_changed".into()), MontyObject::String(last_changed)),
-        (MontyObject::String("last_updated".into()), MontyObject::String(last_updated)),
-        (MontyObject::String("domain".into()), MontyObject::String(domain)),
-        (MontyObject::String("object_id".into()), MontyObject::String(object_id)),
-        (MontyObject::String("name".into()), MontyObject::String(friendly_name)),
-        (MontyObject::String("is_on".into()), MontyObject::Bool(is_on)),
-        (MontyObject::String("is_off".into()), MontyObject::Bool(is_off)),
-    ];
+        .unwrap_or(serde_json::json!({}));
+    let attrs_monty = json_to_monty_obj(&attributes);
 
     MontyObject::Dataclass {
         name: "EntityState".to_string(),
         type_id: 0,
-        field_names,
-        attrs: DictPairs::from(pairs),
-        methods: vec![],
-        frozen: true,
+        field_names: vec![
+            "entity_id".into(),
+            "state".into(),
+            "domain".into(),
+            "name".into(),
+            "last_changed".into(),
+            "last_updated".into(),
+            "is_on".into(),
+            "attributes".into(),
+        ],
+        attrs: vec![
+            (MontyObject::String("entity_id".into()), MontyObject::String(entity_id)),
+            (MontyObject::String("state".into()), MontyObject::String(state)),
+            (MontyObject::String("domain".into()), MontyObject::String(domain)),
+            (MontyObject::String("name".into()), MontyObject::String(friendly_name)),
+            (MontyObject::String("last_changed".into()), MontyObject::String(last_changed)),
+            (MontyObject::String("last_updated".into()), MontyObject::String(last_updated)),
+            (MontyObject::String("is_on".into()), MontyObject::Bool(is_on)),
+            (MontyObject::String("attributes".into()), attrs_monty),
+        ].into(),
+        frozen: false,
     }
 }
 
-/// Convert a JSON array of HA entities to a list of EntityState dataclasses.
+/// Convert a JSON array of HA state objects to a list of EntityState.
 pub fn json_to_entity_state_list(value: &serde_json::Value) -> MontyObject {
-    match value.as_array() {
-        Some(arr) => {
-            let items: Vec<MontyObject> = arr.iter().map(json_to_entity_state).collect();
-            MontyObject::List(items)
+    match value {
+        serde_json::Value::Array(arr) => {
+            MontyObject::List(arr.iter().map(json_to_entity_state).collect())
         }
-        None => MontyObject::List(vec![]),
+        _ => json_to_entity_state(value),
     }
 }
+
+// ---------------------------------------------------------------------------
+// Error formatting
+// ---------------------------------------------------------------------------
+
+/// Format a MontyException into a user-friendly error string.
+pub fn format_monty_error(err: &MontyException) -> String {
+    // MontyException implements Display with Python-style tracebacks
+    err.to_string()
+}
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    fn sample_entity_json() -> serde_json::Value {
-        serde_json::json!({
-            "entity_id": "sensor.living_room_temp",
-            "state": "22.5",
-            "last_changed": "2026-02-15T10:30:00Z",
-            "last_updated": "2026-02-15T10:31:00Z",
-            "attributes": {
-                "device_class": "temperature",
-                "unit_of_measurement": "°C",
-                "friendly_name": "Living Room Temperature"
+    #[test]
+    fn test_init_repl_empty() {
+        let repl = init_repl("");
+        assert!(repl.is_ok());
+    }
+
+    #[test]
+    fn test_init_repl_with_code() {
+        let repl = init_repl("x = 42");
+        assert!(repl.is_ok());
+    }
+
+    #[test]
+    fn test_init_repl_syntax_error() {
+        let result = init_repl("def");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_start_snippet_simple_expression() {
+        let repl = init_repl("").unwrap();
+        let result = start_snippet(repl, "1 + 2");
+        match result {
+            ReplEvalResult::Complete { value, .. } => {
+                assert_eq!(value, Some(MontyObject::Int(3)));
             }
-        })
+            _ => panic!("Expected Complete"),
+        }
     }
 
     #[test]
-    fn test_entity_state_is_dataclass() {
-        let obj = json_to_entity_state(&sample_entity_json());
-        match &obj {
-            MontyObject::Dataclass { name, frozen, .. } => {
-                assert_eq!(name, "EntityState");
-                assert!(*frozen);
+    fn test_start_snippet_print_captured() {
+        let repl = init_repl("").unwrap();
+        let result = start_snippet(repl, "print('hello')");
+        match result {
+            ReplEvalResult::Complete { output, .. } => {
+                assert_eq!(output.trim(), "hello");
             }
-            other => panic!("Expected Dataclass, got: {other:?}"),
+            _ => panic!("Expected Complete"),
         }
     }
 
     #[test]
-    fn test_entity_state_fields() {
-        let obj = json_to_entity_state(&sample_entity_json());
-        if let MontyObject::Dataclass { field_names, attrs, .. } = &obj {
-            assert_eq!(field_names.len(), 10);
-            assert_eq!(field_names[0], "entity_id");
-            assert_eq!(field_names[5], "domain");
-            assert_eq!(field_names[8], "is_on");
-
-            // Check attrs by iterating DictPairs.
-            let pairs: Vec<_> = attrs.into_iter().collect();
-            // entity_id
-            assert_eq!(pairs[0].1, MontyObject::String("sensor.living_room_temp".into()));
-            // state
-            assert_eq!(pairs[1].1, MontyObject::String("22.5".into()));
-            // domain (derived)
-            assert_eq!(pairs[5].1, MontyObject::String("sensor".into()));
-            // object_id (derived)
-            assert_eq!(pairs[6].1, MontyObject::String("living_room_temp".into()));
-            // name (from friendly_name)
-            assert_eq!(pairs[7].1, MontyObject::String("Living Room Temperature".into()));
-        } else {
-            panic!("Expected Dataclass");
-        }
-    }
-
-    #[test]
-    fn test_entity_state_is_on_off() {
-        // "on" state
-        let on_json = serde_json::json!({
-            "entity_id": "light.kitchen",
-            "state": "on",
-            "attributes": {}
-        });
-        if let MontyObject::Dataclass { attrs, .. } = json_to_entity_state(&on_json) {
-            let pairs: Vec<_> = attrs.into_iter().collect();
-            assert_eq!(pairs[8].1, MontyObject::Bool(true), "is_on should be true");
-            assert_eq!(pairs[9].1, MontyObject::Bool(false), "is_off should be false");
-        }
-
-        // "off" state
-        let off_json = serde_json::json!({
-            "entity_id": "light.kitchen",
-            "state": "off",
-            "attributes": {}
-        });
-        if let MontyObject::Dataclass { attrs, .. } = json_to_entity_state(&off_json) {
-            let pairs: Vec<_> = attrs.into_iter().collect();
-            assert_eq!(pairs[8].1, MontyObject::Bool(false), "is_on should be false");
-            assert_eq!(pairs[9].1, MontyObject::Bool(true), "is_off should be true");
-        }
-
-        // numeric state (neither on nor off)
-        let num_json = serde_json::json!({
-            "entity_id": "sensor.temp",
-            "state": "22.5",
-            "attributes": {}
-        });
-        if let MontyObject::Dataclass { attrs, .. } = json_to_entity_state(&num_json) {
-            let pairs: Vec<_> = attrs.into_iter().collect();
-            assert_eq!(pairs[8].1, MontyObject::Bool(false), "is_on should be false for numeric");
-            assert_eq!(pairs[9].1, MontyObject::Bool(false), "is_off should be false for numeric");
-        }
-    }
-
-    #[test]
-    fn test_entity_state_domain_derivation() {
-        let json = serde_json::json!({
-            "entity_id": "binary_sensor.front_door",
-            "state": "off",
-            "attributes": {"device_class": "door"}
-        });
-        if let MontyObject::Dataclass { attrs, .. } = json_to_entity_state(&json) {
-            let pairs: Vec<_> = attrs.into_iter().collect();
-            assert_eq!(pairs[5].1, MontyObject::String("binary_sensor".into()));
-            assert_eq!(pairs[6].1, MontyObject::String("front_door".into()));
-        }
-    }
-
-    #[test]
-    fn test_entity_state_name_fallback() {
-        // No friendly_name → falls back to entity_id.
-        let json = serde_json::json!({
-            "entity_id": "sensor.temp",
-            "state": "22.5",
-            "attributes": {}
-        });
-        if let MontyObject::Dataclass { attrs, .. } = json_to_entity_state(&json) {
-            let pairs: Vec<_> = attrs.into_iter().collect();
-            assert_eq!(pairs[7].1, MontyObject::String("sensor.temp".into()));
-        }
-    }
-
-    #[test]
-    fn test_entity_state_attributes_preserved() {
-        let json = sample_entity_json();
-        if let MontyObject::Dataclass { attrs, .. } = json_to_entity_state(&json) {
-            let pairs: Vec<_> = attrs.into_iter().collect();
-            // attrs[2] is the attributes dict.
-            if let MontyObject::Dict(inner) = &pairs[2].1 {
-                let inner_pairs: Vec<_> = inner.into_iter().collect();
-                assert!(inner_pairs.len() >= 3); // device_class, unit, friendly_name
-            } else {
-                panic!("Expected Dict for attributes");
+    fn test_start_snippet_variable_persists() {
+        let repl = init_repl("").unwrap();
+        // First snippet: define a variable.
+        let result = start_snippet(repl, "x = 42");
+        let repl = match result {
+            ReplEvalResult::Complete { repl, .. } => repl,
+            _ => panic!("Expected Complete"),
+        };
+        // Second snippet: use the variable.
+        let result = start_snippet(repl, "x + 1");
+        match result {
+            ReplEvalResult::Complete { value, .. } => {
+                assert_eq!(value, Some(MontyObject::Int(43)));
             }
+            _ => panic!("Expected Complete"),
         }
     }
 
     #[test]
-    fn test_entity_state_list() {
-        let json = serde_json::json!([
-            {"entity_id": "sensor.a", "state": "1", "attributes": {}},
-            {"entity_id": "sensor.b", "state": "2", "attributes": {}}
-        ]);
-        let obj = json_to_entity_state_list(&json);
-        if let MontyObject::List(items) = &obj {
-            assert_eq!(items.len(), 2);
-            assert!(matches!(&items[0], MontyObject::Dataclass { name, .. } if name == "EntityState"));
-            assert!(matches!(&items[1], MontyObject::Dataclass { name, .. } if name == "EntityState"));
-        } else {
-            panic!("Expected List");
+    fn test_start_snippet_external_call_suspends() {
+        let repl = init_repl("").unwrap();
+        let result = start_snippet(repl, "get_state('sensor.temp')");
+        match result {
+            ReplEvalResult::HostCallNeeded { function_name, args, .. } => {
+                assert_eq!(function_name, "get_state");
+                assert_eq!(args, vec![MontyObject::String("sensor.temp".to_string())]);
+            }
+            _ => panic!("Expected HostCallNeeded"),
         }
     }
 
     #[test]
-    fn test_entity_state_list_empty() {
-        let json = serde_json::json!([]);
-        let obj = json_to_entity_state_list(&json);
-        if let MontyObject::List(items) = &obj {
-            assert!(items.is_empty());
-        } else {
-            panic!("Expected List");
+    fn test_start_snippet_syntax_error() {
+        let repl = init_repl("").unwrap();
+        let result = start_snippet(repl, "if");
+        match result {
+            ReplEvalResult::Error { message, .. } => {
+                assert!(!message.is_empty());
+            }
+            _ => panic!("Expected Error"),
         }
     }
 
     #[test]
-    fn test_entity_state_home_state() {
-        let json = serde_json::json!({
-            "entity_id": "person.robin",
-            "state": "home",
-            "attributes": {"friendly_name": "Robin"}
-        });
-        if let MontyObject::Dataclass { attrs, .. } = json_to_entity_state(&json) {
-            let pairs: Vec<_> = attrs.into_iter().collect();
-            assert_eq!(pairs[8].1, MontyObject::Bool(true), "home → is_on");
-            assert_eq!(pairs[9].1, MontyObject::Bool(false), "home → !is_off");
+    fn test_resume_snapshot_completes() {
+        let repl = init_repl("").unwrap();
+        let result = start_snippet(repl, "get_state('sensor.temp')");
+        let snapshot = match result {
+            ReplEvalResult::HostCallNeeded { snapshot, .. } => snapshot,
+            _ => panic!("Expected HostCallNeeded"),
+        };
+
+        // Resume with a fake entity state value.
+        let fake_value = MontyObject::String("21.5".to_string());
+        let resumed = resume_snapshot(snapshot, ExternalResult::Return(fake_value));
+        match resumed {
+            ReplEvalResult::Complete { value, repl, .. } => {
+                // The result should be the string we passed in.
+                assert_eq!(value, Some(MontyObject::String("21.5".to_string())));
+                // And the REPL should be recoverable.
+                assert!(matches!(start_snippet(repl, "1"), ReplEvalResult::Complete { .. }));
+            }
+            _ => panic!("Expected Complete after resume"),
         }
     }
 
     #[test]
-    fn test_entity_state_not_home_state() {
-        let json = serde_json::json!({
-            "entity_id": "person.robin",
-            "state": "not_home",
-            "attributes": {"friendly_name": "Robin"}
-        });
-        if let MontyObject::Dataclass { attrs, .. } = json_to_entity_state(&json) {
-            let pairs: Vec<_> = attrs.into_iter().collect();
-            assert_eq!(pairs[8].1, MontyObject::Bool(false), "not_home → !is_on");
-            assert_eq!(pairs[9].1, MontyObject::Bool(true), "not_home → is_off");
-        }
-    }
-
-    #[test]
-    fn test_entity_state_repr() {
-        let json = serde_json::json!({
-            "entity_id": "light.kitchen",
-            "state": "on",
-            "attributes": {"friendly_name": "Kitchen Light"}
-        });
-        let obj = json_to_entity_state(&json);
-        let repr = format!("{obj}");
-        // Dataclass repr should contain the name and key fields.
-        assert!(repr.contains("EntityState"), "Repr: {repr}");
-        assert!(repr.contains("light.kitchen"), "Repr: {repr}");
-        assert!(repr.contains("on"), "Repr: {repr}");
-    }
-
-    #[test]
-    fn test_map_ext_call_room() {
-        let args = vec![MontyObject::String("Living Room".to_string())];
-        let result = map_ext_call_to_host_call("room", &args);
-        assert!(result.is_some(), "room() should map to a host call");
-        let (method, params) = result.unwrap();
-        assert_eq!(method, "get_area_entities");
-        assert_eq!(params["area"], "Living Room");
-    }
-
-    #[test]
-    fn test_map_ext_call_rooms() {
-        let args: Vec<MontyObject> = vec![];
-        let result = map_ext_call_to_host_call("rooms", &args);
-        assert!(result.is_some(), "rooms() should map to a host call");
-        let (method, _params) = result.unwrap();
-        assert_eq!(method, "get_areas");
-    }
-
-    #[test]
-    fn test_map_ext_call_show_is_none() {
-        let args = vec![MontyObject::String("hello".to_string())];
-        let result = map_ext_call_to_host_call("show", &args);
-        assert!(result.is_none(), "show() should not be a host call");
-    }
-
-    #[test]
-    fn test_map_ext_call_state() {
+    fn test_map_ext_call_get_state() {
         let args = vec![MontyObject::String("sensor.temp".to_string())];
-        let result = map_ext_call_to_host_call("state", &args);
+        let result = map_ext_call_to_host_call("get_state", &args);
         assert!(result.is_some());
         let (method, params) = result.unwrap();
         assert_eq!(method, "get_state");
@@ -812,223 +701,175 @@ mod tests {
     }
 
     #[test]
-    fn test_map_ext_call_states_with_domain() {
-        let args = vec![MontyObject::String("light".to_string())];
-        let result = map_ext_call_to_host_call("states", &args);
-        assert!(result.is_some());
-        let (method, params) = result.unwrap();
-        assert_eq!(method, "get_states");
-        assert_eq!(params["domain"], "light");
-    }
-
-    #[test]
-    fn test_map_ext_call_states_no_args() {
-        let args: Vec<MontyObject> = vec![];
-        let result = map_ext_call_to_host_call("states", &args);
+    fn test_map_ext_call_get_states_no_domain() {
+        let args = vec![];
+        let result = map_ext_call_to_host_call("get_states", &args);
         assert!(result.is_some());
         let (method, _params) = result.unwrap();
         assert_eq!(method, "get_states");
     }
 
     #[test]
-    fn test_map_ext_call_unknown() {
-        let args: Vec<MontyObject> = vec![];
-        let result = map_ext_call_to_host_call("unknown_fn", &args);
-        assert!(result.is_none(), "unknown function should return None");
-    }
-
-    #[test]
-    fn test_ha_external_functions_contains_room() {
-        assert!(HA_EXTERNAL_FUNCTIONS.contains(&"room"));
-        assert!(HA_EXTERNAL_FUNCTIONS.contains(&"rooms"));
-    }
-
-    #[test]
-    fn test_ha_external_functions_contains_statistics() {
-        assert!(HA_EXTERNAL_FUNCTIONS.contains(&"statistics"));
-        assert!(HA_EXTERNAL_FUNCTIONS.contains(&"ago"));
-    }
-
-    #[test]
-    fn test_map_ext_call_statistics() {
-        let args = vec![
-            MontyObject::String("sensor.temp".to_string()),
-            MontyObject::Int(24),
-        ];
-        let result = map_ext_call_to_host_call("statistics", &args);
+    fn test_map_ext_call_get_states_with_domain() {
+        let args = vec![MontyObject::String("light".to_string())];
+        let result = map_ext_call_to_host_call("get_states", &args);
         assert!(result.is_some());
         let (method, params) = result.unwrap();
-        assert_eq!(method, "get_statistics");
-        assert_eq!(params["entity_id"], "sensor.temp");
-        assert_eq!(params["hours"], 24);
-        assert_eq!(params["period"], "hour");
-    }
-
-    #[test]
-    fn test_map_ext_call_statistics_auto_period() {
-        // Short period → 5minute
-        let args = vec![
-            MontyObject::String("sensor.temp".to_string()),
-            MontyObject::Int(3),
-        ];
-        let (_, params) = map_ext_call_to_host_call("statistics", &args).unwrap();
-        assert_eq!(params["period"], "5minute");
-
-        // Long period → day
-        let args = vec![
-            MontyObject::String("sensor.temp".to_string()),
-            MontyObject::Int(168),
-        ];
-        let (_, params) = map_ext_call_to_host_call("statistics", &args).unwrap();
-        assert_eq!(params["period"], "day");
-    }
-
-    #[test]
-    fn test_map_ext_call_ago_is_none() {
-        let args = vec![MontyObject::String("6h".to_string())];
-        let result = map_ext_call_to_host_call("ago", &args);
-        assert!(result.is_none(), "ago() should not be a host call");
-    }
-
-    // --- New introspection function tests ---
-
-    #[test]
-    fn test_map_ext_call_logbook() {
-        let args = vec![
-            MontyObject::String("light.kitchen".to_string()),
-            MontyObject::Int(12),
-        ];
-        let result = map_ext_call_to_host_call("logbook", &args);
-        assert!(result.is_some());
-        let (method, params) = result.unwrap();
-        assert_eq!(method, "get_logbook");
-        assert_eq!(params["entity_id"], "light.kitchen");
-        assert_eq!(params["hours"], 12);
-    }
-
-    #[test]
-    fn test_map_ext_call_logbook_default_hours() {
-        let args = vec![MontyObject::String("sensor.temp".to_string())];
-        let (_, params) = map_ext_call_to_host_call("logbook", &args).unwrap();
-        assert_eq!(params["hours"], 6);
-    }
-
-    #[test]
-    fn test_map_ext_call_template() {
-        let args = vec![MontyObject::String("{{ states('sensor.temp') }}".to_string())];
-        let result = map_ext_call_to_host_call("template", &args);
-        assert!(result.is_some());
-        let (method, params) = result.unwrap();
-        assert_eq!(method, "render_template");
-        assert_eq!(params["template"], "{{ states('sensor.temp') }}");
-    }
-
-    #[test]
-    fn test_map_ext_call_traces_specific() {
-        let args = vec![MontyObject::String("automation.motion_lights".to_string())];
-        let result = map_ext_call_to_host_call("traces", &args);
-        assert!(result.is_some());
-        let (method, params) = result.unwrap();
-        assert_eq!(method, "get_trace");
-        assert_eq!(params["automation_id"], "automation.motion_lights");
-    }
-
-    #[test]
-    fn test_map_ext_call_traces_list_all() {
-        let args: Vec<MontyObject> = vec![];
-        let result = map_ext_call_to_host_call("traces", &args);
-        assert!(result.is_some());
-        let (method, _) = result.unwrap();
-        assert_eq!(method, "list_traces");
-    }
-
-    #[test]
-    fn test_map_ext_call_devices_no_args() {
-        let args: Vec<MontyObject> = vec![];
-        let result = map_ext_call_to_host_call("devices", &args);
-        assert!(result.is_some());
-        let (method, _) = result.unwrap();
-        assert_eq!(method, "get_devices");
-    }
-
-    #[test]
-    fn test_map_ext_call_devices_with_query() {
-        let args = vec![MontyObject::String("hue".to_string())];
-        let result = map_ext_call_to_host_call("devices", &args);
-        assert!(result.is_some());
-        let (method, params) = result.unwrap();
-        assert_eq!(method, "get_devices");
-        assert_eq!(params["query"], "hue");
-    }
-
-    #[test]
-    fn test_map_ext_call_entities() {
-        let args = vec![MontyObject::String("sensor.temp".to_string())];
-        let result = map_ext_call_to_host_call("entities", &args);
-        assert!(result.is_some());
-        let (method, params) = result.unwrap();
-        assert_eq!(method, "get_entity_entry");
-        assert_eq!(params["entity_id"], "sensor.temp");
-    }
-
-    #[test]
-    fn test_map_ext_call_check_config() {
-        let args: Vec<MontyObject> = vec![];
-        let result = map_ext_call_to_host_call("check_config", &args);
-        assert!(result.is_some());
-        let (method, _) = result.unwrap();
-        assert_eq!(method, "check_config");
-    }
-
-    #[test]
-    fn test_map_ext_call_error_log() {
-        let args: Vec<MontyObject> = vec![];
-        let result = map_ext_call_to_host_call("error_log", &args);
-        assert!(result.is_some());
-        let (method, _) = result.unwrap();
-        assert_eq!(method, "get_error_log");
-    }
-
-    #[test]
-    fn test_ha_external_functions_contains_new_functions() {
-        assert!(HA_EXTERNAL_FUNCTIONS.contains(&"logbook"));
-        assert!(HA_EXTERNAL_FUNCTIONS.contains(&"template"));
-        assert!(HA_EXTERNAL_FUNCTIONS.contains(&"traces"));
-        assert!(HA_EXTERNAL_FUNCTIONS.contains(&"devices"));
-        assert!(HA_EXTERNAL_FUNCTIONS.contains(&"entities"));
-        assert!(HA_EXTERNAL_FUNCTIONS.contains(&"check_config"));
-        assert!(HA_EXTERNAL_FUNCTIONS.contains(&"error_log"));
-        assert!(HA_EXTERNAL_FUNCTIONS.contains(&"now"));
-        assert!(HA_EXTERNAL_FUNCTIONS.contains(&"services"));
-    }
-
-    #[test]
-    fn test_map_ext_call_now() {
-        let args: Vec<MontyObject> = vec![];
-        let result = map_ext_call_to_host_call("now", &args);
-        assert!(result.is_some());
-        let (method, _) = result.unwrap();
-        assert_eq!(method, "get_datetime");
-    }
-
-    #[test]
-    fn test_map_ext_call_services_no_args() {
-        let args: Vec<MontyObject> = vec![];
-        let result = map_ext_call_to_host_call("services", &args);
-        assert!(result.is_some());
-        let (method, params) = result.unwrap();
-        assert_eq!(method, "get_services");
-        assert!(params.get("domain").is_none());
-    }
-
-    #[test]
-    fn test_map_ext_call_services_with_domain() {
-        let args = vec![MontyObject::String("light".into())];
-        let result = map_ext_call_to_host_call("services", &args);
-        assert!(result.is_some());
-        let (method, params) = result.unwrap();
-        assert_eq!(method, "get_services");
+        assert_eq!(method, "get_states");
         assert_eq!(params["domain"], "light");
     }
 
+    #[test]
+    fn test_map_ext_call_show_returns_none() {
+        let args = vec![MontyObject::Int(42)];
+        let result = map_ext_call_to_host_call("show", &args);
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_map_ext_call_ago_returns_none() {
+        let args = vec![MontyObject::String("6h".to_string())];
+        let result = map_ext_call_to_host_call("ago", &args);
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_map_ext_call_unknown_returns_none() {
+        let args = vec![];
+        let result = map_ext_call_to_host_call("not_a_real_function", &args);
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_monty_obj_to_json_primitives() {
+        assert_eq!(monty_obj_to_json(&MontyObject::None), serde_json::Value::Null);
+        assert_eq!(monty_obj_to_json(&MontyObject::Bool(true)), serde_json::json!(true));
+        assert_eq!(monty_obj_to_json(&MontyObject::Int(42)), serde_json::json!(42));
+        assert_eq!(
+            monty_obj_to_json(&MontyObject::String("hello".into())),
+            serde_json::json!("hello")
+        );
+    }
+
+    #[test]
+    fn test_monty_obj_to_json_list() {
+        let list = MontyObject::List(vec![MontyObject::Int(1), MontyObject::Int(2)]);
+        assert_eq!(monty_obj_to_json(&list), serde_json::json!([1, 2]));
+    }
+
+    #[test]
+    fn test_monty_obj_to_json_dict() {
+        let dict = MontyObject::Dict(vec![
+            (MontyObject::String("a".into()), MontyObject::Int(1)),
+            (MontyObject::String("b".into()), MontyObject::Int(2)),
+        ].into());
+        let json = monty_obj_to_json(&dict);
+        assert_eq!(json["a"], 1);
+        assert_eq!(json["b"], 2);
+    }
+
+    #[test]
+    fn test_json_to_monty_obj_primitives() {
+        assert_eq!(json_to_monty_obj(&serde_json::Value::Null), MontyObject::None);
+        assert_eq!(json_to_monty_obj(&serde_json::json!(true)), MontyObject::Bool(true));
+        assert_eq!(json_to_monty_obj(&serde_json::json!(42)), MontyObject::Int(42));
+        assert_eq!(
+            json_to_monty_obj(&serde_json::json!("hello")),
+            MontyObject::String("hello".into())
+        );
+    }
+
+    #[test]
+    fn test_json_to_entity_state() {
+        let json = serde_json::json!({
+            "entity_id": "sensor.temp",
+            "state": "21.5",
+            "last_changed": "2024-01-01T00:00:00Z",
+            "last_updated": "2024-01-01T00:00:00Z",
+            "attributes": {
+                "friendly_name": "Temperature",
+                "unit_of_measurement": "°C",
+            }
+        });
+        let result = json_to_entity_state(&json);
+        if let MontyObject::Dataclass { name, .. } = &result {
+            assert_eq!(name, "EntityState");
+            // Verify entity_id is present via JSON conversion.
+            let json = monty_obj_to_json(&result);
+            assert_eq!(json["entity_id"], "sensor.temp");
+        } else {
+            panic!("Expected Dataclass");
+        }
+    }
+
+    #[test]
+    fn test_json_to_entity_state_list() {
+        let json = serde_json::json!([
+            {
+                "entity_id": "sensor.a",
+                "state": "1",
+                "attributes": {}
+            },
+            {
+                "entity_id": "sensor.b",
+                "state": "2",
+                "attributes": {}
+            }
+        ]);
+        let result = json_to_entity_state_list(&json);
+        if let MontyObject::List(items) = &result {
+            assert_eq!(items.len(), 2);
+        } else {
+            panic!("Expected List");
+        }
+    }
+
+    #[test]
+    fn test_map_ext_call_get_history() {
+        let args = vec![
+            MontyObject::String("sensor.temp".to_string()),
+            MontyObject::Int(12),
+        ];
+        let result = map_ext_call_to_host_call("get_history", &args);
+        assert!(result.is_some());
+        let (method, params) = result.unwrap();
+        assert_eq!(method, "get_history");
+        assert_eq!(params["entity_id"], "sensor.temp");
+        assert_eq!(params["hours"], 12.0);
+    }
+
+    #[test]
+    fn test_map_ext_call_call_service() {
+        let args = vec![
+            MontyObject::String("light".to_string()),
+            MontyObject::String("turn_on".to_string()),
+            MontyObject::Dict(vec![
+                (MontyObject::String("entity_id".into()), MontyObject::String("light.kitchen".into())),
+            ].into()),
+        ];
+        let result = map_ext_call_to_host_call("call_service", &args);
+        assert!(result.is_some());
+        let (method, params) = result.unwrap();
+        assert_eq!(method, "call_service");
+        assert_eq!(params["domain"], "light");
+        assert_eq!(params["service"], "turn_on");
+    }
+
+    #[test]
+    fn test_map_ext_call_get_areas() {
+        let result = map_ext_call_to_host_call("get_areas", &[]);
+        assert!(result.is_some());
+        let (method, _) = result.unwrap();
+        assert_eq!(method, "get_areas");
+    }
+
+    #[test]
+    fn test_map_ext_call_get_area_entities() {
+        let args = vec![MontyObject::String("kitchen".to_string())];
+        let result = map_ext_call_to_host_call("get_area_entities", &args);
+        assert!(result.is_some());
+        let (method, params) = result.unwrap();
+        assert_eq!(method, "get_area_entities");
+        assert_eq!(params["area_id"], "kitchen");
+    }
 }

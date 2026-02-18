@@ -1,54 +1,8 @@
-use monty::{MontyObject, NoLimitTracker, Snapshot};
+use monty::{MontyRepl, NoLimitTracker, ReplSnapshot};
 
-/// Check if a Python snippet references `_` as a standalone identifier.
-///
-/// Returns `true` if `_` appears as a variable name (not as part of a longer
-/// identifier like `my_var` or `__init__`). This is used to prevent pushing
-/// `_`-dependent snippets into the replay context, since `_` changes every eval.
-fn snippet_references_underscore(code: &str) -> bool {
-    let bytes = code.as_bytes();
-    let len = bytes.len();
-    let mut i = 0;
-    while i < len {
-        // Skip string literals to avoid false positives in f"_{x}_" etc.
-        if bytes[i] == b'"' || bytes[i] == b'\'' {
-            let quote = bytes[i];
-            i += 1;
-            while i < len && bytes[i] != quote {
-                if bytes[i] == b'\\' {
-                    i += 1; // skip escaped char
-                }
-                i += 1;
-            }
-            i += 1; // skip closing quote
-            continue;
-        }
-        // Skip comments
-        if bytes[i] == b'#' {
-            while i < len && bytes[i] != b'\n' {
-                i += 1;
-            }
-            continue;
-        }
-        if bytes[i] == b'_' {
-            // Check it's a standalone `_` — not part of a longer identifier.
-            let before_ok = i == 0 || !is_ident_char(bytes[i - 1]);
-            let after_ok = i + 1 >= len || !is_ident_char(bytes[i + 1]);
-            if before_ok && after_ok {
-                return true;
-            }
-        }
-        i += 1;
-    }
-    false
-}
+use crate::monty_runtime;
 
-/// Is this byte part of a Python identifier? (letter, digit, underscore)
-fn is_ident_char(b: u8) -> bool {
-    b.is_ascii_alphanumeric() || b == b'_'
-}
-
-/// Session state — history, variables, counters, Python context.
+/// Session state — history, variables, counters, REPL.
 /// Owned by the shell engine, persists for the lifetime of the card.
 pub struct Session {
     /// Command history (most recent last).
@@ -61,25 +15,21 @@ pub struct Session {
     /// Stored here so we can resume when `fulfill_host_call` is called.
     pending_monty: Option<PendingMonty>,
 
-    /// Accumulated successful Python code blocks.
-    /// Each new eval runs these as a prefix so variables/functions persist.
-    python_context: Vec<String>,
-
-    /// The last expression result as a raw MontyObject.
-    /// Passed as the `_` input variable to subsequent evals so that
-    /// dataclasses retain dot-access (no serialization needed).
-    last_result: Option<MontyObject>,
+    /// The stateful Monty REPL session.
+    /// `Some` when idle (ready to start a new snippet).
+    /// `None` when a snippet is in-flight (consumed by `start()`).
+    pub(crate) repl: Option<MontyRepl<NoLimitTracker>>,
 }
 
 /// A Monty execution that paused at an external function call.
 pub struct PendingMonty {
     /// The host call ID this snapshot is waiting on.
     pub call_id: String,
-    /// The frozen Monty execution state.
-    pub snapshot: Snapshot<NoLimitTracker>,
+    /// The frozen REPL execution state.
+    pub snapshot: ReplSnapshot<NoLimitTracker>,
     /// Print output captured before the pause.
     pub output_so_far: String,
-    /// The original user snippet — committed to context on success.
+    /// The original user snippet (for display/debugging).
     pub original_snippet: String,
     /// The host call method name (e.g. "get_state", "get_states") —
     /// used to decide how to convert the response back to MontyObject.
@@ -90,12 +40,13 @@ pub struct PendingMonty {
 
 impl Session {
     pub fn new() -> Self {
+        // Initialise a fresh Monty REPL with all HA external functions registered.
+        let repl = monty_runtime::init_repl("").ok();
         Self {
             history_entries: Vec::new(),
             call_counter: 0,
             pending_monty: None,
-            python_context: Vec::new(),
-            last_result: None,
+            repl,
         }
     }
 
@@ -137,45 +88,20 @@ impl Session {
         self.pending_monty.as_ref().map(|p| p.call_id.as_str()) == Some(call_id)
     }
 
-    /// Record a successful Python snippet for context replay.
-    ///
-    /// Skips snippets that reference `_` as a standalone identifier.
-    /// `_` holds the *current* last result at eval time, so replaying
-    /// a snippet like `data = _` in a later eval would silently bind
-    /// `data` to whatever `_` happens to be then — causing cascading
-    /// errors in subsequent context lines that use `data`.
-    pub fn push_python_context(&mut self, code: &str) {
-        if snippet_references_underscore(code) {
-            return;
-        }
-        self.python_context.push(code.to_string());
+    /// Take the REPL out of the session (for starting a new snippet).
+    /// Returns `None` if the REPL is currently in-flight or failed to init.
+    pub fn take_repl(&mut self) -> Option<MontyRepl<NoLimitTracker>> {
+        self.repl.take()
     }
 
-    /// Clear all accumulated Python context.
-    /// Used when a context-replay error is detected so we don't
-    /// keep poisoning every subsequent eval.
-    pub fn clear_python_context(&mut self) {
-        self.python_context.clear();
+    /// Store the REPL back into the session after a snippet completes.
+    pub fn store_repl(&mut self, repl: MontyRepl<NoLimitTracker>) {
+        self.repl = Some(repl);
     }
 
-    /// Store the last expression result as a MontyObject for `_`.
-    pub fn set_last_result(&mut self, obj: MontyObject) {
-        self.last_result = Some(obj);
-    }
-
-    /// Get a reference to the last result (if any), for passing as `_` input.
-    pub fn last_result(&self) -> Option<&MontyObject> {
-        self.last_result.as_ref()
-    }
-
-    /// Build the context prefix — all previously successful snippets concatenated.
-    /// Returns empty string if no context yet.
-    pub fn python_context_prefix(&self) -> String {
-        if self.python_context.is_empty() {
-            String::new()
-        } else {
-            self.python_context.join("\n")
-        }
+    /// Check if the REPL is available (idle, ready for a new snippet).
+    pub fn has_repl(&self) -> bool {
+        self.repl.is_some()
     }
 }
 
@@ -209,151 +135,26 @@ mod tests {
     }
 
     #[test]
-    fn test_python_context_empty_prefix() {
+    fn test_repl_initialized() {
         let session = Session::new();
-        assert_eq!(session.python_context_prefix(), "");
+        assert!(session.has_repl());
     }
 
     #[test]
-    fn test_python_context_accumulates() {
+    fn test_take_repl() {
         let mut session = Session::new();
-        session.push_python_context("x = 1");
-        session.push_python_context("y = 2");
-        assert_eq!(session.python_context_prefix(), "x = 1\ny = 2");
+        assert!(session.has_repl());
+        let repl = session.take_repl();
+        assert!(repl.is_some());
+        assert!(!session.has_repl());
     }
 
     #[test]
-    fn test_last_result_stored() {
+    fn test_store_repl() {
         let mut session = Session::new();
-        session.set_last_result(MontyObject::Int(42));
-        assert_eq!(session.last_result(), Some(&MontyObject::Int(42)));
-    }
-
-    #[test]
-    fn test_last_result_does_not_affect_context_prefix() {
-        let mut session = Session::new();
-        session.push_python_context("x = 1");
-        session.set_last_result(MontyObject::Int(42));
-        // _ is NOT injected into the context prefix — it's passed as an input instead.
-        assert_eq!(session.python_context_prefix(), "x = 1");
-    }
-
-    #[test]
-    fn test_last_result_updates() {
-        let mut session = Session::new();
-        session.set_last_result(MontyObject::Int(1));
-        session.set_last_result(MontyObject::Int(2));
-        assert_eq!(session.last_result(), Some(&MontyObject::Int(2)));
-    }
-
-    // --- Context poison prevention tests ---
-
-    #[test]
-    fn test_snippet_with_underscore_not_pushed() {
-        let mut session = Session::new();
-        session.push_python_context("data = _");
-        assert_eq!(session.python_context_prefix(), "");
-    }
-
-    #[test]
-    fn test_snippet_using_underscore_in_expression_not_pushed() {
-        let mut session = Session::new();
-        session.push_python_context("for item in _:\n  print(item)");
-        assert_eq!(session.python_context_prefix(), "");
-    }
-
-    #[test]
-    fn test_snippet_with_underscore_in_identifier_pushed() {
-        let mut session = Session::new();
-        session.push_python_context("my_var = 1");
-        assert_eq!(session.python_context_prefix(), "my_var = 1");
-    }
-
-    #[test]
-    fn test_snippet_with_dunder_pushed() {
-        let mut session = Session::new();
-        session.push_python_context("class Foo:\n  def __init__(self): pass");
-        assert_eq!(
-            session.python_context_prefix(),
-            "class Foo:\n  def __init__(self): pass"
-        );
-    }
-
-    #[test]
-    fn test_snippet_with_underscore_prefix_pushed() {
-        let mut session = Session::new();
-        session.push_python_context("_private = 42");
-        assert_eq!(session.python_context_prefix(), "_private = 42");
-    }
-
-    #[test]
-    fn test_pure_function_def_pushed() {
-        let mut session = Session::new();
-        session.push_python_context("def greet(name):\n  return f'Hello {name}'");
-        assert_eq!(
-            session.python_context_prefix(),
-            "def greet(name):\n  return f'Hello {name}'"
-        );
-    }
-
-    #[test]
-    fn test_show_underscore_not_pushed() {
-        let mut session = Session::new();
-        session.push_python_context("show(_)");
-        assert_eq!(session.python_context_prefix(), "");
-    }
-
-    #[test]
-    fn test_clear_python_context() {
-        let mut session = Session::new();
-        session.push_python_context("x = 1");
-        session.push_python_context("y = 2");
-        assert_eq!(session.python_context_prefix(), "x = 1\ny = 2");
-        session.clear_python_context();
-        assert_eq!(session.python_context_prefix(), "");
-    }
-
-    #[test]
-    fn test_underscore_in_string_literal_pushed() {
-        // `_` inside a string literal is not detected as a variable
-        // reference, so the snippet is pushed. This is fine — if the
-        // snippet ONLY uses `_` inside strings, it doesn't depend on
-        // `_`'s runtime value and is safe to replay.
-        let mut session = Session::new();
-        session.push_python_context("print(f'result: {_}')");
-        // The `_` is inside quotes, so our scanner doesn't flag it.
-        assert_eq!(session.python_context_prefix(), "print(f'result: {_}')");
-    }
-
-    #[test]
-    fn test_underscore_in_comment_not_counted() {
-        // _ in a comment should not trigger the skip
-        let mut session = Session::new();
-        session.push_python_context("x = 1  # use _ later");
-        assert_eq!(session.python_context_prefix(), "x = 1  # use _ later");
-    }
-
-    // --- snippet_references_underscore unit tests ---
-
-    #[test]
-    fn test_refs_underscore_standalone() {
-        assert!(snippet_references_underscore("data = _"));
-        assert!(snippet_references_underscore("_ + 1"));
-        assert!(snippet_references_underscore("print(_)"));
-        assert!(snippet_references_underscore("x = _ if _ else 0"));
-    }
-
-    #[test]
-    fn test_refs_underscore_not_in_identifiers() {
-        assert!(!snippet_references_underscore("my_var = 1"));
-        assert!(!snippet_references_underscore("_private = 42"));
-        assert!(!snippet_references_underscore("__dunder__ = 1"));
-        assert!(!snippet_references_underscore("x_"));
-    }
-
-    #[test]
-    fn test_refs_underscore_in_comment_ignored() {
-        assert!(!snippet_references_underscore("x = 1  # _ is special"));
-        assert!(!snippet_references_underscore("# data = _"));
+        let repl = session.take_repl().unwrap();
+        assert!(!session.has_repl());
+        session.store_repl(repl);
+        assert!(session.has_repl());
     }
 }

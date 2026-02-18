@@ -97,8 +97,7 @@ show(matches)
 Then use the entity_id from the result:
 
 \`\`\`signal-deck
-results = _
-history(results[0].entity_id, ago("6h"))
+history(matches[0].entity_id, ago("6h"))
 \`\`\`
 
 To get a single entity from a list, always use list + index: matches[0]
@@ -114,8 +113,7 @@ show(matches)
 \`\`\`
 
 \`\`\`signal-deck
-found = _
-call_service("light", "turn_off", {"entity_id": found[0].entity_id})
+call_service("light", "turn_off", {"entity_id": matches[0].entity_id})
 \`\`\`
 
 The user sees a confirmation card and must click ✓ before anything happens.
@@ -177,28 +175,6 @@ labels = [e.name for e in sensors]
 values = [float(e.state) for e in sensors]
 plot_bar(labels, values, "Energy Usage (kWh)")
 \`\`\`
-
-─────────────────────────────────────────────────────────────────────
-
-THE \`_\` VARIABLE — how to pass data between blocks:
-
-Each block runs in a fresh sandbox. Named variables DO NOT persist.
-The ONLY bridge between blocks is \`_\` — it holds the last expression result.
-
-Always start the next block with \`data = _\` to grab the previous result:
-
-\`\`\`signal-deck
-states("sensor")
-\`\`\`
-
-\`\`\`signal-deck
-sensors = _
-low_battery = [e for e in sensors if "battery" in e.entity_id and e.state not in ("unknown","unavailable") and int(e.state) < 20]
-show(low_battery)
-\`\`\`
-
-You only see the first 10 rows in your context, but \`_\` has the FULL list.
-Use filtering or slicing (\`_[10:20]\`) to page through — do NOT re-query.
 
 ─────────────────────────────────────────────────────────────────────
 
@@ -559,30 +535,15 @@ export class AnalystSession {
     // Extract a text representation of the result for injecting into the document
     let output = this._specToText(spec);
 
-    // Append a reminder about _ so the LLM sees it next to every result.
-    // This prevents it from referencing named variables in the next block.
-    // Skip for service call results — they don't need chaining.
+    // Append contextual hints so the LLM knows what to do next.
     if (spec.type === 'error') {
       output += '\n[Code failed. Read the error, fix the code, and try again in a new code block. Do NOT guess the answer.]';
     } else if (this._isEmptyResult(spec, output)) {
       output += '\n[Empty result — no entities matched. You MUST write another code block searching states() with NO domain argument. Do NOT answer yet.]';
-    } else if (!this._isServiceCallResult(spec)) {
-      output += '\n[This result is now stored as _ — use data = _ in your next block to access it]';
     }
 
     return { output, spec };
   }
-
-  /** Check whether a spec looks like a service call result. */
-  private _isServiceCallResult(spec: RenderSpec): boolean {
-    if (spec.type === 'text') {
-      return spec.content.includes("'service':")
-        || spec.content.includes('"service":')
-        || spec.content.includes("'success':");
-    }
-    return false;
-  }
-
   /** Check whether a result is empty (no entities found, empty list, etc). */
   private _isEmptyResult(spec: RenderSpec, text: string): boolean {
     if (spec.type === 'text' && (text.trim() === '[]' || text.trim() === '()' || text.trim() === 'None')) return true;
@@ -611,7 +572,7 @@ export class AnalystSession {
         const shown = spec.rows.slice(0, limit);
         const rows = shown.map((r) => r.join(' | ')).join('\n');
         if (total > limit) {
-          return `${headerLine}\n${rows}\n... (${total - limit} more rows hidden — _ holds the full list. Use _[${limit}:${limit * 2}] to see next page, or filter with [e for e in _ if ...])`;
+          return `${headerLine}\n${rows}\n... (${total - limit} more rows hidden — use slicing or filtering to see more)`;
         }
         return `${headerLine}\n${rows}`;
       }
@@ -622,7 +583,7 @@ export class AnalystSession {
         const limit = AnalystSession.MAX_TEXT_ROWS;
         if (children.length > limit) {
           const shown = children.slice(0, limit).map((c) => this._specToText(c)).join('\n');
-          return `${shown}\n... (${children.length - limit} more items hidden — _ holds the full list. Use _[${limit}:${limit * 2}] or filter)`;
+          return `${shown}\n... (${children.length - limit} more items hidden — use slicing or filtering to see more)`;
         }
         return children.map((c) => this._specToText(c)).join('\n');
       }

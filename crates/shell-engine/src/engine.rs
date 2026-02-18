@@ -165,45 +165,79 @@ impl ShellEngine {
     }
 
     /// Evaluate a Python snippet using the Monty sandboxed interpreter.
+    ///
+    /// Two-phase approach:
+    /// 1. Try `feed()` — borrows the REPL, returns expression values,
+    ///    REPL survives errors.  Works for everything except external
+    ///    function calls.
+    /// 2. If `feed()` fails because the snippet calls an external function,
+    ///    fall back to `start()` with a try/except wrapper.  `start()`
+    ///    consumes the REPL but the wrapper guarantees we get it back.
     fn eval_python(&mut self, input: &str) -> RenderSpec {
-        let context = self.session.python_context_prefix();
-        let last_result = self.session.last_result().cloned();
-        let result = monty_runtime::eval_python(&context, input, last_result.as_ref());
-
-        // If we got an error AND there was context, the context itself might
-        // be the problem (stale variables, changed types, etc.).  Try running
-        // the snippet without context — if that succeeds, the context was
-        // poisoned, so clear it and use the clean result.  If the retry also
-        // fails, keep the original context (the error is in the snippet itself).
-        if let monty_runtime::MontyEvalResult::Error(_) = &result {
-            if !context.is_empty() {
-                let retry = monty_runtime::eval_python("", input, last_result.as_ref());
-                if !matches!(&retry, monty_runtime::MontyEvalResult::Error(_)) {
-                    // Retry succeeded → context was the problem.  Clear it.
-                    self.session.clear_python_context();
-                    return self.handle_monty_eval_result(input, "", retry);
+        // --- Phase 1: try feed() ---
+        let feed_result = {
+            let repl = match self.session.repl.as_mut() {
+                Some(r) => r,
+                None => {
+                    // REPL not available — try to re-init.
+                    match monty_runtime::init_repl("") {
+                        Ok(r) => {
+                            self.session.store_repl(r);
+                            self.session.repl.as_mut().unwrap()
+                        }
+                        Err(e) => return RenderSpec::error(format!("REPL init failed: {e}")),
+                    }
                 }
-                // Both failed → the snippet itself is broken; keep context.
+            };
+            monty_runtime::feed_snippet(repl, input)
+        };
+
+        match feed_result {
+            Ok((output, value)) => {
+                // feed() succeeded — render with expression value.
+                self.render_complete(&output, value.as_ref())
+            }
+            Err(err_msg) => {
+                // Check if the error is "external function not implemented"
+                // — that means the snippet calls an ext function and we
+                // need to use start() instead.
+                if err_msg.contains("not implemented with standard execution") {
+                    // --- Phase 2: retry with start() ---
+                    let repl = match self.session.take_repl() {
+                        Some(r) => r,
+                        None => {
+                            match monty_runtime::init_repl("") {
+                                Ok(r) => r,
+                                Err(e) => return RenderSpec::error(format!("REPL init failed: {e}")),
+                            }
+                        }
+                    };
+                    let result = monty_runtime::start_snippet(repl, input);
+                    self.handle_monty_eval_result(input, "", result)
+                } else {
+                    // Genuine error (syntax, runtime, etc.)
+                    // REPL is still alive — feed() borrows it.
+                    RenderSpec::error(err_msg)
+                }
             }
         }
-
-        self.handle_monty_eval_result(input, "", result)
     }
 
-    /// Handle a MontyEvalResult — unified handler for eval_python and resumed executions.
+    /// Handle a ReplEvalResult — unified handler for eval_python and resumed executions.
     fn handle_monty_eval_result(
         &mut self,
         input: &str,
         prefix_output: &str,
-        result: monty_runtime::MontyEvalResult,
+        result: monty_runtime::ReplEvalResult,
     ) -> RenderSpec {
         match result {
-            monty_runtime::MontyEvalResult::Complete { output, result: res } => {
-                self.session.push_python_context(input);
+            monty_runtime::ReplEvalResult::Complete { repl, output, value } => {
+                // Store the REPL back for the next snippet.
+                self.session.store_repl(repl);
                 let full_output = combine_output(prefix_output, &output);
-                self.render_complete(&full_output, res.as_ref())
+                self.render_complete(&full_output, value.as_ref())
             }
-            monty_runtime::MontyEvalResult::HostCallNeeded {
+            monty_runtime::ReplEvalResult::HostCallNeeded {
                 output,
                 function_name,
                 args,
@@ -213,43 +247,66 @@ impl ShellEngine {
 
                 // Handle show() locally — not a host call.
                 if function_name == "show" {
-                    self.session.push_python_context(input);
-                    if let Some(first_arg) = args.first() {
-                        self.session.set_last_result(first_arg.clone());
-                    }
                     let mut specs = Vec::new();
                     if !combined.is_empty() {
-                        specs.push(RenderSpec::text(combined));
+                        specs.push(RenderSpec::text(combined.clone()));
                     }
                     if let Some(first_arg) = args.first() {
                         specs.push(self.format_monty_show(first_arg));
                     }
-                    return if specs.len() == 1 {
-                        specs.remove(0)
-                    } else {
-                        RenderSpec::vstack(specs)
-                    };
+                    // Resume immediately with None since show() returns None.
+                    let resumed = monty_runtime::resume_snapshot(
+                        snapshot,
+                        monty::ExternalResult::Return(MontyObject::None),
+                    );
+                    // If the resumed result is just Complete with None, return our show spec.
+                    // Otherwise chain it.
+                    match resumed {
+                        monty_runtime::ReplEvalResult::Complete { repl, .. } => {
+                            self.session.store_repl(repl);
+                            return if specs.len() == 1 {
+                                specs.remove(0)
+                            } else {
+                                RenderSpec::vstack(specs)
+                            };
+                        }
+                        other => {
+                            return self.handle_monty_eval_result(input, &combined, other);
+                        }
+                    }
                 }
 
                 // Handle chart functions locally — no host call needed.
                 if matches!(function_name.as_str(), "plot_line" | "plot_bar" | "plot_pie" | "plot_series") {
-                    self.session.push_python_context(input);
                     let mut specs = Vec::new();
                     if !combined.is_empty() {
-                        specs.push(RenderSpec::text(combined));
+                        specs.push(RenderSpec::text(combined.clone()));
                     }
                     specs.push(self.build_chart(&function_name, &args));
-                    return if specs.len() == 1 {
-                        specs.remove(0)
-                    } else {
-                        RenderSpec::vstack(specs)
-                    };
+                    // Resume with None.
+                    let resumed = monty_runtime::resume_snapshot(
+                        snapshot,
+                        monty::ExternalResult::Return(MontyObject::None),
+                    );
+                    match resumed {
+                        monty_runtime::ReplEvalResult::Complete { repl, .. } => {
+                            self.session.store_repl(repl);
+                            return if specs.len() == 1 {
+                                specs.remove(0)
+                            } else {
+                                RenderSpec::vstack(specs)
+                            };
+                        }
+                        other => {
+                            return self.handle_monty_eval_result(input, &combined, other);
+                        }
+                    }
                 }
 
                 // Handle ago() locally — pure time calculation, no host call.
                 if function_name == "ago" {
                     let result_obj = parse_ago_to_monty(&args);
-                    let resume_result = monty_runtime::resume_with_result(
+                    let resume_result = monty_runtime::resume_snapshot(
                         snapshot,
                         monty::ExternalResult::Return(result_obj),
                     );
@@ -274,12 +331,16 @@ impl ShellEngine {
                     )),
                 }
             }
-            monty_runtime::MontyEvalResult::Error(msg) => {
+            monty_runtime::ReplEvalResult::Error { message, repl } => {
+                // Store the REPL back if we got one (e.g. parse error before exec started).
+                if let Some(r) = repl {
+                    self.session.store_repl(r);
+                }
                 let mut specs = Vec::new();
                 if !prefix_output.is_empty() {
                     specs.push(RenderSpec::text(prefix_output.to_string()));
                 }
-                specs.push(RenderSpec::error(msg));
+                specs.push(RenderSpec::error(message));
                 if specs.len() == 1 {
                     specs.remove(0)
                 } else {
@@ -359,22 +420,17 @@ impl ShellEngine {
         };
 
         // Resume the Monty execution with the result.
-        let result = monty_runtime::resume_with_result(
+        let result = monty_runtime::resume_snapshot(
             pending.snapshot,
             monty::ExternalResult::Return(monty_value),
         );
 
         // Combine any output from before the pause with the resumed output.
         match result {
-            monty_runtime::MontyEvalResult::Complete { output, result: res } => {
+            monty_runtime::ReplEvalResult::Complete { repl, output, value } => {
+                // Store the REPL back for the next snippet.
+                self.session.store_repl(repl);
                 let full_output = combine_output(&pending.output_so_far, &output);
-
-                // Store `_` for the result.
-                if let Some(obj) = &res {
-                    self.session.set_last_result(obj.clone());
-                } else {
-                    self.session.set_last_result(MontyObject::None);
-                }
 
                 // Auto-visualize specific methods — render rich displays
                 // instead of dumping raw data.
@@ -404,9 +460,9 @@ impl ShellEngine {
                     };
                 }
 
-                self.render_complete(&full_output, res.as_ref())
+                self.render_complete(&full_output, value.as_ref())
             }
-            monty_runtime::MontyEvalResult::HostCallNeeded {
+            monty_runtime::ReplEvalResult::HostCallNeeded {
                 output,
                 function_name,
                 args,
@@ -417,41 +473,71 @@ impl ShellEngine {
 
                 // Handle show() locally — it's not a host call.
                 if function_name == "show" {
-                    if let Some(first_arg) = args.first() {
-                        self.session.set_last_result(first_arg.clone());
-                    }
                     let mut specs = Vec::new();
                     if !combined_output.is_empty() {
-                        specs.push(RenderSpec::text(combined_output));
+                        specs.push(RenderSpec::text(combined_output.clone()));
                     }
                     if let Some(first_arg) = args.first() {
                         specs.push(self.format_monty_show(first_arg));
                     }
-                    return if specs.len() == 1 {
-                        specs.remove(0)
-                    } else {
-                        RenderSpec::vstack(specs)
-                    };
+                    // Resume with None.
+                    let resumed = monty_runtime::resume_snapshot(
+                        snapshot,
+                        monty::ExternalResult::Return(MontyObject::None),
+                    );
+                    match resumed {
+                        monty_runtime::ReplEvalResult::Complete { repl, .. } => {
+                            self.session.store_repl(repl);
+                            return if specs.len() == 1 {
+                                specs.remove(0)
+                            } else {
+                                RenderSpec::vstack(specs)
+                            };
+                        }
+                        other => {
+                            return self.handle_monty_resumed_result(
+                                &pending.original_snippet,
+                                &combined_output,
+                                other,
+                            );
+                        }
+                    }
                 }
 
                 // Handle chart functions locally — no host call needed.
                 if matches!(function_name.as_str(), "plot_line" | "plot_bar" | "plot_pie" | "plot_series") {
                     let mut specs = Vec::new();
                     if !combined_output.is_empty() {
-                        specs.push(RenderSpec::text(combined_output));
+                        specs.push(RenderSpec::text(combined_output.clone()));
                     }
                     specs.push(self.build_chart(&function_name, &args));
-                    return if specs.len() == 1 {
-                        specs.remove(0)
-                    } else {
-                        RenderSpec::vstack(specs)
-                    };
+                    let resumed = monty_runtime::resume_snapshot(
+                        snapshot,
+                        monty::ExternalResult::Return(MontyObject::None),
+                    );
+                    match resumed {
+                        monty_runtime::ReplEvalResult::Complete { repl, .. } => {
+                            self.session.store_repl(repl);
+                            return if specs.len() == 1 {
+                                specs.remove(0)
+                            } else {
+                                RenderSpec::vstack(specs)
+                            };
+                        }
+                        other => {
+                            return self.handle_monty_resumed_result(
+                                &pending.original_snippet,
+                                &combined_output,
+                                other,
+                            );
+                        }
+                    }
                 }
 
                 // Handle ago() locally — pure time calculation.
                 if function_name == "ago" {
                     let result_obj = parse_ago_to_monty(&args);
-                    let resume_result = monty_runtime::resume_with_result(
+                    let resume_result = monty_runtime::resume_snapshot(
                         snapshot,
                         monty::ExternalResult::Return(result_obj),
                     );
@@ -480,13 +566,15 @@ impl ShellEngine {
                     )),
                 }
             }
-            monty_runtime::MontyEvalResult::Error(msg) => {
-                // Error — do NOT commit to context.
+            monty_runtime::ReplEvalResult::Error { message, repl } => {
+                if let Some(r) = repl {
+                    self.session.store_repl(r);
+                }
                 let mut specs = Vec::new();
                 if !pending.output_so_far.is_empty() {
                     specs.push(RenderSpec::text(pending.output_so_far));
                 }
-                specs.push(RenderSpec::error(msg));
+                specs.push(RenderSpec::error(message));
                 if specs.len() == 1 {
                     specs.remove(0)
                 } else {
@@ -502,14 +590,15 @@ impl ShellEngine {
         &mut self,
         original_snippet: &str,
         prefix_output: &str,
-        result: monty_runtime::MontyEvalResult,
+        result: monty_runtime::ReplEvalResult,
     ) -> RenderSpec {
         match result {
-            monty_runtime::MontyEvalResult::Complete { output, result: res } => {
+            monty_runtime::ReplEvalResult::Complete { repl, output, value } => {
+                self.session.store_repl(repl);
                 let full_output = combine_output(prefix_output, &output);
-                self.render_complete(&full_output, res.as_ref())
+                self.render_complete(&full_output, value.as_ref())
             }
-            monty_runtime::MontyEvalResult::HostCallNeeded {
+            monty_runtime::ReplEvalResult::HostCallNeeded {
                 output,
                 function_name,
                 args,
@@ -518,40 +607,65 @@ impl ShellEngine {
                 let combined = combine_output(prefix_output, &output);
 
                 if function_name == "show" {
-                    if let Some(first_arg) = args.first() {
-                        self.session.set_last_result(first_arg.clone());
-                    }
                     let mut specs = Vec::new();
                     if !combined.is_empty() {
-                        specs.push(RenderSpec::text(combined));
+                        specs.push(RenderSpec::text(combined.clone()));
                     }
                     if let Some(first_arg) = args.first() {
                         specs.push(self.format_monty_show(first_arg));
                     }
-                    return if specs.len() == 1 {
-                        specs.remove(0)
-                    } else {
-                        RenderSpec::vstack(specs)
-                    };
+                    let resumed = monty_runtime::resume_snapshot(
+                        snapshot,
+                        monty::ExternalResult::Return(MontyObject::None),
+                    );
+                    match resumed {
+                        monty_runtime::ReplEvalResult::Complete { repl, .. } => {
+                            self.session.store_repl(repl);
+                            return if specs.len() == 1 {
+                                specs.remove(0)
+                            } else {
+                                RenderSpec::vstack(specs)
+                            };
+                        }
+                        other => {
+                            return self.handle_monty_resumed_result(
+                                original_snippet, &combined, other,
+                            );
+                        }
+                    }
                 }
 
                 // Handle chart functions locally.
                 if matches!(function_name.as_str(), "plot_line" | "plot_bar" | "plot_pie" | "plot_series") {
                     let mut specs = Vec::new();
                     if !combined.is_empty() {
-                        specs.push(RenderSpec::text(combined));
+                        specs.push(RenderSpec::text(combined.clone()));
                     }
                     specs.push(self.build_chart(&function_name, &args));
-                    return if specs.len() == 1 {
-                        specs.remove(0)
-                    } else {
-                        RenderSpec::vstack(specs)
-                    };
+                    let resumed = monty_runtime::resume_snapshot(
+                        snapshot,
+                        monty::ExternalResult::Return(MontyObject::None),
+                    );
+                    match resumed {
+                        monty_runtime::ReplEvalResult::Complete { repl, .. } => {
+                            self.session.store_repl(repl);
+                            return if specs.len() == 1 {
+                                specs.remove(0)
+                            } else {
+                                RenderSpec::vstack(specs)
+                            };
+                        }
+                        other => {
+                            return self.handle_monty_resumed_result(
+                                original_snippet, &combined, other,
+                            );
+                        }
+                    }
                 }
 
                 if function_name == "ago" {
                     let result_obj = parse_ago_to_monty(&args);
-                    let resume_result = monty_runtime::resume_with_result(
+                    let resume_result = monty_runtime::resume_snapshot(
                         snapshot,
                         monty::ExternalResult::Return(result_obj),
                     );
@@ -578,12 +692,15 @@ impl ShellEngine {
                     )),
                 }
             }
-            monty_runtime::MontyEvalResult::Error(msg) => {
+            monty_runtime::ReplEvalResult::Error { message, repl } => {
+                if let Some(r) = repl {
+                    self.session.store_repl(r);
+                }
                 let mut specs = Vec::new();
                 if !prefix_output.is_empty() {
                     specs.push(RenderSpec::text(prefix_output.to_string()));
                 }
-                specs.push(RenderSpec::error(msg));
+                specs.push(RenderSpec::error(message));
                 if specs.len() == 1 {
                     specs.remove(0)
                 } else {
@@ -595,15 +712,7 @@ impl ShellEngine {
 
     /// Render a completed Monty result — auto-display EntityState richly,
     /// plain text `→ value` for everything else.
-    /// Also stores the result as `_` for the next eval.
     fn render_complete(&mut self, output: &str, result: Option<&MontyObject>) -> RenderSpec {
-        // Store last result as `_` for subsequent evals.
-        if let Some(obj) = result {
-            self.session.set_last_result(obj.clone());
-        } else {
-            self.session.set_last_result(MontyObject::None);
-        }
-
         let mut specs: Vec<RenderSpec> = Vec::new();
 
         if !output.is_empty() {
@@ -2738,7 +2847,7 @@ mod tests {
     }
 
     #[test]
-    fn test_python_state_does_not_commit_to_context() {
+    fn test_python_state_persists_in_repl() {
         let mut engine = ShellEngine::new();
         // Start a host call.
         let result = engine.eval("s = state('sensor.temp')");
@@ -2752,11 +2861,11 @@ mod tests {
         let state_data = r#"{"entity_id": "sensor.temp", "state": "22.5"}"#;
         engine.fulfill_host_call(call_id, state_data);
 
-        // 's' should NOT be accessible — ext-fn snippets aren't committed
-        // to context because they can't be safely replayed.
+        // With the stateful MontyRepl, 's' SHOULD persist — the REPL
+        // retains all variables across snippets.
         let r2 = engine.eval("print(type(s))");
         let j2 = serde_json::to_string(&r2).unwrap();
-        assert!(j2.contains(r#""type":"error""#), "s should NOT persist: {j2}");
+        assert!(j2.contains("dataclass"), "s should persist in MontyRepl: {j2}");
     }
 
     #[test]
