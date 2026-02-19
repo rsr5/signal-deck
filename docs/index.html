@@ -315,11 +315,9 @@
           powered by WebAssembly, runs entirely in your browser.
         </p>
 
-        <!-- SCREENCAST PLACEHOLDER -->
-        <div class="media-placeholder">
-          <span class="placeholder-icon">&#x1F3AC;</span>
-          Screencast &mdash; 30-60s demo of the REPL in action
-          <span class="placeholder-hint">docs/images/screencast.mp4 or animated GIF</span>
+        <!-- HERO SCREENSHOT -->
+        <div class="screenshot" style="margin-bottom: 20px;">
+          <img src="images/light-query.png" alt="Signal Deck — Python REPL inside Home Assistant" />
         </div>
 
         <div class="hero-actions">
@@ -327,12 +325,7 @@
           <a href="https://github.com/rsr5/signal-deck" class="btn btn-secondary">View on GitHub &rarr;</a>
         </div>
 
-        <!-- HERO SCREENSHOT PLACEHOLDER -->
-        <div class="media-placeholder" style="margin-top: 28px;">
-          <span class="placeholder-icon">&#x1F4F8;</span>
-          Hero screenshot &mdash; full card showing REPL with rendered output
-          <span class="placeholder-hint">docs/images/hero-screenshot.png (1200x720 recommended)</span>
-        </div>
+        <!-- Additional screenshots can be added here -->
       </section>
 
       <!-- Features -->
@@ -380,11 +373,24 @@
             <p>Command parsing, data transforms, and render-spec generation in Rust compiled to WASM. Fast and tiny.</p>
           </div>
         </div>
-        <!-- FEATURE SCREENSHOTS PLACEHOLDER -->
-        <div class="media-placeholder">
-          <span class="placeholder-icon">&#x1F4F8;</span>
-          Feature screenshots &mdash; 2-3 screenshots showing different features (entity cards, charts, AI analyst)
-          <span class="placeholder-hint">docs/images/feature-*.png (800x500 each)</span>
+        <!-- FEATURE SCREENSHOTS -->
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-top: 24px;">
+          <div class="screenshot">
+            <img src="images/pie-chart.png" alt="Signal Deck — ECharts pie chart visualisation" />
+            <div class="screenshot-caption">ECharts visualisations</div>
+          </div>
+          <div class="screenshot">
+            <img src="images/spark-line.png" alt="Signal Deck — Sparkline history chart" />
+            <div class="screenshot-caption">History sparklines</div>
+          </div>
+          <div class="screenshot">
+            <img src="images/conversation.png" alt="Signal Deck — AI Signal Analyst conversation" />
+            <div class="screenshot-caption">AI Signal Analyst</div>
+          </div>
+          <div class="screenshot">
+            <img src="images/overlay-console.png" alt="Signal Deck — Overlay console mode" />
+            <div class="screenshot-caption">Overlay console</div>
+          </div>
         </div>
       </section>
 
@@ -426,12 +432,7 @@ history("sensor.living_room_temperature", "6h")
 
 # Upcoming calendar events
 events("calendar.home", "24h")</code></pre>
-        <!-- QUICK START SCREENSHOT PLACEHOLDER -->
-        <div class="media-placeholder">
-          <span class="placeholder-icon">&#x1F4F8;</span>
-          Quick start screenshot &mdash; REPL showing the commands above with rendered output
-          <span class="placeholder-hint">docs/images/quick-start.png</span>
-        </div>
+        <!-- Quick start visuals covered by hero + feature screenshots -->
       </section>
 
       <!-- Card Configuration -->
@@ -447,11 +448,10 @@ events("calendar.home", "24h")</code></pre>
             <tr><td><code>analyst_entity</code></td><td>string</td><td>&mdash;</td><td>Conversation agent entity for AI analyst</td></tr>
           </tbody>
         </table>
-        <!-- OVERLAY MODE SCREENSHOT PLACEHOLDER -->
-        <div class="media-placeholder">
-          <span class="placeholder-icon">&#x1F4F8;</span>
-          Overlay mode screenshot &mdash; showing the floating panel over a dashboard
-          <span class="placeholder-hint">docs/images/overlay-mode.png</span>
+        <!-- OVERLAY MODE SCREENSHOT -->
+        <div class="screenshot" style="margin-top: 24px;">
+          <img src="images/overlay-console.png" alt="Signal Deck — Overlay console mode floating over a dashboard" />
+          <div class="screenshot-caption">Overlay console mode</div>
         </div>
       </section>
 
@@ -617,15 +617,13 @@ analyst_entity: conversation.ollama  # or any conversation agent</code></pre>
 # "Which lights are on right now?"
 # "Show me the front door history for today"</code></pre>
         <div class="callout info">
-          <strong>Optimised for small models</strong>
-          The analyst prompt is carefully tuned for local LLMs (Llama, Mistral, Phi) running via Ollama.
-          It works with larger models too, but doesn't require them.
+          <strong>Works with any Conversation agent</strong>
+          The analyst uses HA Conversation, so it works with whichever LLM you already have configured &mdash; cloud or local.
         </div>
-        <!-- AI ANALYST SCREENSHOT PLACEHOLDER -->
-        <div class="media-placeholder">
-          <span class="placeholder-icon">&#x1F4F8;</span>
-          AI Analyst screenshot &mdash; showing a conversation with the analyst
-          <span class="placeholder-hint">docs/images/ai-analyst.png</span>
+        <!-- AI ANALYST SCREENSHOT -->
+        <div class="screenshot" style="margin-top: 24px;">
+          <img src="images/conversation.png" alt="Signal Deck — AI Signal Analyst conversation" />
+          <div class="screenshot-caption">AI Signal Analyst conversation</div>
         </div>
       </section>
 

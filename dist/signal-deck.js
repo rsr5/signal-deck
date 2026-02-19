@@ -52869,6 +52869,9 @@ let AnalystPanel = class AnalystPanel extends i$1 {
     }
     clearHistory() {
         this._messages = [];
+        this._session = null;
+        this._inputHistory = [];
+        this._historyIndex = -1;
     }
     /** Copy the full conversation as plain text to clipboard. */
     async _copyConversation() {
@@ -53361,7 +53364,7 @@ let AnalystPanel = class AnalystPanel extends i$1 {
         </div>
         <div class="panel-actions">
           <button class="panel-btn" @click=${this._copyConversation} title="Copy conversation">⧉</button>
-          <button class="panel-btn" @click=${() => this.clearHistory()} title="Clear history">✕</button>
+          <button class="panel-btn" @click=${() => this.clearHistory()} title="Reset chat">↺</button>
         </div>
       </div>
 
@@ -53756,6 +53759,11 @@ let SignalDeck = class SignalDeck extends i$1 {
         this._inputValue = e.target.value;
     }
     _toggleAnalyst() {
+        if (!this._showAnalyst) {
+            // Open at 50 % of the card width, clamped to the resize limits.
+            const w = this.clientWidth;
+            this._analystWidth = Math.max(200, Math.min(800, Math.round(w * 0.5)));
+        }
         this._showAnalyst = !this._showAnalyst;
     }
     // -----------------------------------------------------------------------

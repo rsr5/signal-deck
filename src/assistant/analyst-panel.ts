@@ -392,6 +392,9 @@ export class AnalystPanel extends LitElement {
 
   clearHistory(): void {
     this._messages = [];
+    this._session = null;
+    this._inputHistory = [];
+    this._historyIndex = -1;
   }
 
   /** Copy the full conversation as plain text to clipboard. */
@@ -888,7 +891,7 @@ export class AnalystPanel extends LitElement {
         </div>
         <div class="panel-actions">
           <button class="panel-btn" @click=${this._copyConversation} title="Copy conversation">⧉</button>
-          <button class="panel-btn" @click=${() => this.clearHistory()} title="Clear history">✕</button>
+          <button class="panel-btn" @click=${() => this.clearHistory()} title="Reset chat">↺</button>
         </div>
       </div>
 

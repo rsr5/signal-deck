@@ -13,9 +13,8 @@ All running entirely in your browser.
 [![Home Assistant](https://img.shields.io/badge/Home%20Assistant-2024.1+-blue?style=flat-square)](https://www.home-assistant.io)
 [![Alpha](https://img.shields.io/badge/status-alpha-red?style=flat-square)](#)
 
-<!-- 🖼️ HERO SCREENSHOT — replace with an actual screenshot or screencast -->
-<!-- Recommended: 1200×800 or a GIF/MP4 screencast showing the REPL in action -->
-<img src="docs/images/hero.png" alt="Signal Deck — Python REPL for Home Assistant" width="900" />
+<!-- 🖼️ HERO SCREENSHOT -->
+<img src="https://rsr5.github.io/signal-deck/images/light-query.png" alt="Signal Deck — Python REPL for Home Assistant" width="900" />
 
 [**Documentation**](https://rsr5.github.io/signal-deck) · [**Install**](#installation) · [**Quick Start**](#quick-start) · [**API Reference**](#python-api)
 
@@ -240,7 +239,7 @@ The built-in AI analyst connects to your **HA Conversation** integration. It wri
 %ask chart the agile electricity prices
 ```
 
-Works with Claude, GPT, Ollama, and any HA Conversation agent. The system prompt is tuned for small local models (≤ 8B).
+Works with any HA Conversation agent — Claude, GPT, Ollama, or whatever you have configured.
 
 <!-- 🖼️ AI ANALYST SCREENSHOT — replace with screenshot showing analyst answering a question -->
 <!-- <img src="docs/images/analyst.png" alt="AI Signal Analyst" width="700" /> -->

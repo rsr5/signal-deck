@@ -9,3 +9,7 @@ ha_python_shell_plan.md
 dist/index.html
 dist/types/
 dist/*.map
+
+# Large media — hosted externally, not in git
+docs/*.gif
+docs/*.mp4
