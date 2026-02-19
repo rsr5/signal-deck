@@ -329,6 +329,12 @@ signal-deck/
 
 See [`CONTRIBUTING.md`](CONTRIBUTING.md) for the full contributor guide and [`agents.md`](agents.md) for architecture rules.
 
+## ⚠️ Early Development & Disclaimer
+
+Signal Deck is in **early alpha** — APIs, commands, and configuration may change between releases. It is not yet battle-tested and should not be relied upon for critical automations.
+
+Signal Deck can interact with your Home Assistant instance, including calling services that control devices. **Use at your own risk.** The authors are not responsible for any damage, data loss, or unintended actions resulting from its use. See the [MIT License](LICENSE) for full terms.
+
 ## License
 
 [MIT](LICENSE) © 2025 [Robin Ridler](https://github.com/rsr5)
