@@ -4,14 +4,16 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Signal Deck — The oscilloscope for Home Assistant</title>
-  <meta name="description" content="A safe Python REPL Lovelace card for Home Assistant with built-in AI analyst, ECharts visualisations, and deep state exploration." />
-
-  <!-- Fonts -->
+  <meta name="description" content="A safe Python REPL Lovelace card for Home Assistant with built-in AI analyst, ECharts visualisations, and deep state exploration — all running in your browser." />
+  <meta name="keywords" content="Home Assistant, Lovelace, Python, REPL, WASM, WebAssembly, HACS, observability, debugging" />
+  <meta property="og:title" content="Signal Deck — The oscilloscope for Home Assistant" />
+  <meta property="og:description" content="A safe Python REPL embedded in Lovelace with built-in AI analyst, ECharts visualisations, and deep state exploration." />
+  <meta property="og:type" content="website" />
+  <meta property="og:url" content="https://rsr5.github.io/signal-deck" />
+  <!-- <meta property="og:image" content="https://rsr5.github.io/signal-deck/images/og-card.png" /> -->
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
-
-  <!-- highlight.js -->
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/styles/github-dark.min.css" />
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/yaml.min.js"></script>
@@ -19,9 +21,7 @@
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/bash.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/rust.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.9.0/languages/typescript.min.js"></script>
-
   <style>
-    /* ─── CSS Custom Properties ─────────────────────────────── */
     :root {
       --bg-primary: #0d1117;
       --bg-secondary: #161b22;
@@ -47,8 +47,6 @@
       --radius: 8px;
       --radius-lg: 12px;
     }
-
-    /* ─── Reset ─────────────────────────────────────────────── */
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
     html { scroll-behavior: smooth; scroll-padding-top: calc(var(--nav-height) + 24px); }
     body {
@@ -62,1250 +60,768 @@
     a:hover { color: var(--accent-hover); }
     img { max-width: 100%; height: auto; border-radius: var(--radius); }
     code { font-family: var(--font-mono); font-size: 0.9em; }
-
-    /* ─── Top Nav ───────────────────────────────────────────── */
     .top-nav {
-      position: sticky;
-      top: 0;
-      z-index: 100;
+      position: sticky; top: 0; z-index: 100;
       background: rgba(13, 17, 23, 0.85);
       backdrop-filter: blur(12px);
       border-bottom: 1px solid var(--border-color);
       height: var(--nav-height);
-      display: flex;
-      align-items: center;
-      padding: 0 24px;
+      display: flex; align-items: center; padding: 0 24px;
     }
     .top-nav .logo {
-      font-weight: 700;
-      font-size: 1.1rem;
-      color: var(--text-primary);
-      display: flex;
-      align-items: center;
-      gap: 8px;
+      font-weight: 700; font-size: 1.1rem; color: var(--text-primary);
+      display: flex; align-items: center; gap: 8px;
     }
-    .top-nav .logo .icon {
-      font-size: 1.4rem;
-    }
-    .top-nav-links {
-      margin-left: auto;
-      display: flex;
-      gap: 20px;
-      align-items: center;
-    }
-    .top-nav-links a {
-      color: var(--text-secondary);
-      font-size: 0.875rem;
-      font-weight: 500;
-    }
+    .top-nav .logo .icon { font-size: 1.4rem; }
+    .top-nav-links { margin-left: auto; display: flex; gap: 20px; align-items: center; }
+    .top-nav-links a { color: var(--text-secondary); font-size: 0.875rem; font-weight: 500; }
     .top-nav-links a:hover { color: var(--text-primary); }
-    .github-link {
-      display: flex;
-      align-items: center;
-      gap: 6px;
-    }
-    .github-link svg {
-      width: 20px;
-      height: 20px;
-      fill: currentColor;
-    }
-
-    /* ─── Layout ────────────────────────────────────────────── */
+    .github-link { display: flex; align-items: center; gap: 6px; }
+    .github-link svg { width: 20px; height: 20px; fill: currentColor; }
     .layout {
-      display: grid;
-      grid-template-columns: var(--sidebar-width) 1fr;
-      max-width: var(--max-width);
-      margin: 0 auto;
-      gap: 48px;
-      padding: 32px 24px;
+      display: grid; grid-template-columns: var(--sidebar-width) 1fr;
+      max-width: var(--max-width); margin: 0 auto; gap: 48px; padding: 32px 24px;
     }
-
-    /* ─── Sidebar ───────────────────────────────────────────── */
     .sidebar {
-      position: sticky;
-      top: calc(var(--nav-height) + 24px);
-      align-self: start;
-      max-height: calc(100vh - var(--nav-height) - 48px);
-      overflow-y: auto;
-      padding-right: 16px;
+      position: sticky; top: calc(var(--nav-height) + 24px); align-self: start;
+      max-height: calc(100vh - var(--nav-height) - 48px); overflow-y: auto; padding-right: 16px;
     }
     .sidebar::-webkit-scrollbar { width: 3px; }
     .sidebar::-webkit-scrollbar-thumb { background: var(--border-color); border-radius: 3px; }
     .sidebar h4 {
-      font-size: 0.7rem;
-      font-weight: 600;
-      text-transform: uppercase;
-      letter-spacing: 0.08em;
-      color: var(--text-muted);
-      margin-top: 20px;
-      margin-bottom: 8px;
+      font-size: 0.7rem; font-weight: 600; text-transform: uppercase;
+      letter-spacing: 0.08em; color: var(--text-muted); margin-top: 20px; margin-bottom: 8px;
     }
     .sidebar h4:first-child { margin-top: 0; }
     .sidebar a {
-      display: block;
-      padding: 4px 0;
-      font-size: 0.82rem;
-      color: var(--text-secondary);
-      line-height: 1.5;
+      display: block; padding: 4px 0; font-size: 0.82rem;
+      color: var(--text-secondary); line-height: 1.5;
     }
     .sidebar a:hover { color: var(--accent); }
-    .sidebar a.active {
-      color: var(--accent);
-      font-weight: 500;
-    }
-
-    /* ─── Content ───────────────────────────────────────────── */
-    .content {
-      min-width: 0;
-      max-width: 820px;
-    }
-
-    /* ─── Hero ──────────────────────────────────────────────── */
-    .hero {
-      padding: 48px 0 40px;
-      border-bottom: 1px solid var(--border-color);
-      margin-bottom: 48px;
-    }
+    .sidebar a.active { color: var(--accent); font-weight: 500; }
+    .content { min-width: 0; max-width: 820px; }
+    .hero { padding: 48px 0 40px; border-bottom: 1px solid var(--border-color); margin-bottom: 48px; }
     .hero h1 {
-      font-size: 2.8rem;
-      font-weight: 700;
-      line-height: 1.15;
-      margin-bottom: 16px;
+      font-size: 2.8rem; font-weight: 700; line-height: 1.15; margin-bottom: 16px;
       background: linear-gradient(135deg, var(--accent), #76ff03);
-      -webkit-background-clip: text;
-      -webkit-text-fill-color: transparent;
-      background-clip: text;
+      -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text;
     }
     .hero .subtitle {
-      font-size: 1.15rem;
-      color: var(--text-secondary);
-      line-height: 1.65;
-      max-width: 620px;
-      margin-bottom: 24px;
+      font-size: 1.15rem; color: var(--text-secondary);
+      line-height: 1.65; max-width: 620px; margin-bottom: 24px;
     }
-    .badges {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 8px;
-      margin-bottom: 28px;
-    }
+    .badges { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 28px; }
     .badge {
-      display: inline-flex;
-      align-items: center;
-      gap: 5px;
-      padding: 4px 12px;
-      border-radius: 20px;
-      font-size: 0.75rem;
-      font-weight: 500;
-      font-family: var(--font-mono);
+      display: inline-flex; align-items: center; gap: 5px; padding: 4px 12px;
+      border-radius: 20px; font-size: 0.75rem; font-weight: 500; font-family: var(--font-mono);
     }
-    .badge.alpha {
-      background: var(--accent-alt-subtle);
-      color: var(--accent-alt);
-      border: 1px solid rgba(255, 110, 64, 0.3);
-    }
-    .badge.version {
-      background: var(--accent-subtle);
-      color: var(--accent);
-      border: 1px solid rgba(0, 229, 255, 0.3);
-    }
-    .badge.license {
-      background: rgba(63, 185, 80, 0.15);
-      color: var(--success);
-      border: 1px solid rgba(63, 185, 80, 0.3);
-    }
-    .badge.hacs {
-      background: rgba(210, 153, 34, 0.15);
-      color: var(--warning);
-      border: 1px solid rgba(210, 153, 34, 0.3);
-    }
-    .hero-actions {
-      display: flex;
-      gap: 12px;
-      flex-wrap: wrap;
-    }
+    .badge.alpha { background: var(--accent-alt-subtle); color: var(--accent-alt); border: 1px solid rgba(255, 110, 64, 0.3); }
+    .badge.version { background: var(--accent-subtle); color: var(--accent); border: 1px solid rgba(0, 229, 255, 0.3); }
+    .badge.license { background: rgba(63, 185, 80, 0.15); color: var(--success); border: 1px solid rgba(63, 185, 80, 0.3); }
+    .badge.hacs { background: rgba(210, 153, 34, 0.15); color: var(--warning); border: 1px solid rgba(210, 153, 34, 0.3); }
+    .hero-actions { display: flex; gap: 12px; flex-wrap: wrap; }
     .btn {
-      display: inline-flex;
-      align-items: center;
-      gap: 8px;
-      padding: 10px 20px;
-      border-radius: var(--radius);
-      font-size: 0.875rem;
-      font-weight: 600;
-      transition: all 0.2s;
-      border: 1px solid transparent;
+      display: inline-flex; align-items: center; gap: 8px; padding: 10px 20px;
+      border-radius: var(--radius); font-size: 0.875rem; font-weight: 600;
+      transition: all 0.2s; border: 1px solid transparent;
     }
-    .btn-primary {
-      background: var(--accent);
-      color: var(--bg-primary);
-    }
-    .btn-primary:hover {
-      background: var(--accent-hover);
-      color: var(--bg-primary);
-    }
-    .btn-secondary {
-      background: var(--bg-tertiary);
-      color: var(--text-primary);
-      border-color: var(--border-color);
-    }
-    .btn-secondary:hover {
-      border-color: var(--accent);
-      color: var(--accent);
-    }
-
-    /* ─── Sections ──────────────────────────────────────────── */
-    .section {
-      margin-bottom: 56px;
-    }
+    .btn-primary { background: var(--accent); color: var(--bg-primary); }
+    .btn-primary:hover { background: var(--accent-hover); color: var(--bg-primary); }
+    .btn-secondary { background: var(--bg-tertiary); color: var(--text-primary); border-color: var(--border-color); }
+    .btn-secondary:hover { border-color: var(--accent); color: var(--accent); }
+    .section { margin-bottom: 56px; }
     .section h2 {
-      font-size: 1.65rem;
-      font-weight: 700;
-      margin-bottom: 16px;
-      padding-bottom: 10px;
-      border-bottom: 1px solid var(--border-color);
-      color: var(--text-primary);
+      font-size: 1.65rem; font-weight: 700; margin-bottom: 16px; padding-bottom: 10px;
+      border-bottom: 1px solid var(--border-color); color: var(--text-primary);
     }
     .section h3 {
-      font-size: 1.15rem;
-      font-weight: 600;
-      margin-top: 32px;
-      margin-bottom: 12px;
-      color: var(--text-primary);
+      font-size: 1.15rem; font-weight: 600; margin-top: 32px;
+      margin-bottom: 12px; color: var(--text-primary);
     }
-    .section p {
-      margin-bottom: 16px;
-      color: var(--text-secondary);
-      line-height: 1.7;
+    .section h4 {
+      font-size: 1rem; font-weight: 600; margin-top: 24px;
+      margin-bottom: 8px; color: var(--text-primary);
     }
-    .section ul, .section ol {
-      margin-bottom: 16px;
-      padding-left: 24px;
-      color: var(--text-secondary);
-    }
-    .section li {
-      margin-bottom: 6px;
-      line-height: 1.6;
-    }
-    .section li code {
-      background: var(--bg-tertiary);
-      padding: 2px 6px;
-      border-radius: 4px;
-      font-size: 0.85em;
-      color: var(--accent);
-    }
-
-    /* ─── Code Blocks ───────────────────────────────────────── */
+    .section p { margin-bottom: 16px; color: var(--text-secondary); line-height: 1.7; }
+    .section ul, .section ol { margin-bottom: 16px; padding-left: 24px; color: var(--text-secondary); }
+    .section li { margin-bottom: 6px; line-height: 1.6; }
+    .section li code { background: var(--bg-tertiary); padding: 2px 6px; border-radius: 4px; font-size: 0.85em; color: var(--accent); }
     pre {
-      background: var(--bg-secondary) !important;
-      border: 1px solid var(--border-color);
-      border-radius: var(--radius);
-      padding: 16px 20px;
-      overflow-x: auto;
-      margin-bottom: 16px;
-      position: relative;
+      background: var(--bg-secondary) !important; border: 1px solid var(--border-color);
+      border-radius: var(--radius); padding: 16px 20px; overflow-x: auto;
+      margin-bottom: 16px; position: relative;
     }
     pre code {
-      font-size: 0.8rem;
-      line-height: 1.6;
-      background: none !important;
-      padding: 0 !important;
-      color: var(--text-primary);
+      font-size: 0.8rem; line-height: 1.6;
+      background: none !important; padding: 0 !important; color: var(--text-primary);
     }
-    .code-label {
-      position: absolute;
-      top: 8px;
-      right: 12px;
-      font-size: 0.65rem;
-      font-family: var(--font-mono);
-      color: var(--text-muted);
-      text-transform: uppercase;
-      letter-spacing: 0.05em;
-    }
-    /* Inline code */
     p code, li code, td code {
-      background: var(--bg-tertiary);
-      padding: 2px 6px;
-      border-radius: 4px;
-      font-size: 0.85em;
-      color: var(--accent);
+      background: var(--bg-tertiary); padding: 2px 6px;
+      border-radius: 4px; font-size: 0.85em; color: var(--accent);
     }
-
-    /* ─── Tables ─────────────────────────────────────────────── */
-    table {
-      width: 100%;
-      border-collapse: collapse;
-      margin-bottom: 16px;
-      font-size: 0.875rem;
-    }
-    th, td {
-      text-align: left;
-      padding: 10px 14px;
-      border-bottom: 1px solid var(--border-color);
-    }
+    table { width: 100%; border-collapse: collapse; margin-bottom: 16px; font-size: 0.875rem; }
+    th, td { text-align: left; padding: 10px 14px; border-bottom: 1px solid var(--border-color); }
     th {
-      font-weight: 600;
-      color: var(--text-primary);
-      background: var(--bg-secondary);
-      font-size: 0.8rem;
-      text-transform: uppercase;
-      letter-spacing: 0.04em;
+      font-weight: 600; color: var(--text-primary); background: var(--bg-secondary);
+      font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.04em;
     }
-    td {
-      color: var(--text-secondary);
-    }
-    tr:hover td {
-      background: rgba(0, 229, 255, 0.03);
-    }
-
-    /* ─── Feature Grid ──────────────────────────────────────── */
+    td { color: var(--text-secondary); }
+    tr:hover td { background: rgba(0, 229, 255, 0.03); }
     .feature-grid {
-      display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-      gap: 16px;
-      margin-bottom: 24px;
+      display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: 16px; margin-bottom: 24px;
     }
     .feature-card {
-      background: var(--bg-card);
-      border: 1px solid var(--border-color);
-      border-radius: var(--radius-lg);
-      padding: 20px;
-      transition: border-color 0.2s;
+      background: var(--bg-card); border: 1px solid var(--border-color);
+      border-radius: var(--radius-lg); padding: 20px; transition: border-color 0.2s;
     }
-    .feature-card:hover {
-      border-color: var(--accent);
-    }
-    .feature-card .icon {
-      font-size: 1.6rem;
-      margin-bottom: 10px;
-    }
-    .feature-card h4 {
-      font-size: 0.95rem;
-      font-weight: 600;
-      margin-bottom: 6px;
-      color: var(--text-primary);
-    }
-    .feature-card p {
-      font-size: 0.82rem;
-      color: var(--text-secondary);
-      line-height: 1.5;
-      margin: 0;
-    }
-
-    /* ─── Callouts ──────────────────────────────────────────── */
+    .feature-card:hover { border-color: var(--accent); }
+    .feature-card .icon { font-size: 1.6rem; margin-bottom: 10px; }
+    .feature-card h4 { font-size: 0.95rem; font-weight: 600; margin-bottom: 6px; color: var(--text-primary); margin-top: 0; }
+    .feature-card p { font-size: 0.82rem; color: var(--text-secondary); line-height: 1.5; margin: 0; }
     .callout {
-      border-left: 3px solid;
-      padding: 14px 18px;
-      border-radius: 0 var(--radius) var(--radius) 0;
-      margin-bottom: 16px;
-      font-size: 0.875rem;
+      border-left: 3px solid; padding: 14px 18px;
+      border-radius: 0 var(--radius) var(--radius) 0; margin-bottom: 16px; font-size: 0.875rem;
     }
-    .callout.info {
-      border-color: var(--accent);
-      background: var(--accent-subtle);
-      color: var(--accent);
-    }
-    .callout.warning {
-      border-color: var(--warning);
-      background: rgba(210, 153, 34, 0.1);
-      color: var(--warning);
-    }
-    .callout.danger {
-      border-color: var(--danger);
-      background: rgba(248, 81, 73, 0.1);
-      color: var(--danger);
-    }
-    .callout strong {
-      display: block;
-      margin-bottom: 4px;
-    }
-
-    /* ─── Architecture Diagram ──────────────────────────────── */
+    .callout.info { border-color: var(--accent); background: var(--accent-subtle); color: var(--accent); }
+    .callout.warning { border-color: var(--warning); background: rgba(210, 153, 34, 0.1); color: var(--warning); }
+    .callout.danger { border-color: var(--danger); background: rgba(248, 81, 73, 0.1); color: var(--danger); }
+    .callout strong { display: block; margin-bottom: 4px; }
     .arch-diagram {
-      background: var(--bg-secondary);
-      border: 1px solid var(--border-color);
-      border-radius: var(--radius-lg);
-      padding: 24px;
-      font-family: var(--font-mono);
-      font-size: 0.78rem;
-      line-height: 1.5;
-      color: var(--text-secondary);
-      overflow-x: auto;
-      margin-bottom: 16px;
-      white-space: pre;
+      background: var(--bg-secondary); border: 1px solid var(--border-color);
+      border-radius: var(--radius-lg); padding: 24px; font-family: var(--font-mono);
+      font-size: 0.78rem; line-height: 1.5; color: var(--text-secondary);
+      overflow-x: auto; margin-bottom: 16px; white-space: pre;
     }
     .arch-diagram .layer-ts { color: #58a6ff; }
     .arch-diagram .layer-rust { color: var(--accent-alt); }
     .arch-diagram .layer-monty { color: var(--success); }
-
-    /* ─── Keyboard Shortcut Keys ────────────────────────────── */
     kbd {
-      display: inline-block;
-      padding: 2px 7px;
-      font-family: var(--font-mono);
-      font-size: 0.78rem;
-      background: var(--bg-tertiary);
-      border: 1px solid var(--border-color);
-      border-radius: 4px;
-      box-shadow: 0 1px 0 var(--border-color);
-      color: var(--text-primary);
+      display: inline-block; padding: 2px 7px; font-family: var(--font-mono); font-size: 0.78rem;
+      background: var(--bg-tertiary); border: 1px solid var(--border-color); border-radius: 4px;
+      box-shadow: 0 1px 0 var(--border-color); color: var(--text-primary);
     }
-
-    /* ─── Screenshot ────────────────────────────────────────── */
     .screenshot {
-      border: 1px solid var(--border-color);
-      border-radius: var(--radius-lg);
-      overflow: hidden;
-      margin-bottom: 24px;
-      box-shadow: 0 4px 24px rgba(0, 0, 0, 0.3);
+      border: 1px solid var(--border-color); border-radius: var(--radius-lg);
+      overflow: hidden; margin-bottom: 24px; box-shadow: 0 4px 24px rgba(0, 0, 0, 0.3);
     }
-    .screenshot img {
-      display: block;
-      width: 100%;
-      border-radius: 0;
-    }
+    .screenshot img { display: block; width: 100%; border-radius: 0; }
     .screenshot-caption {
-      text-align: center;
-      font-size: 0.8rem;
-      color: var(--text-muted);
-      margin-top: 8px;
-      margin-bottom: 24px;
+      text-align: center; font-size: 0.8rem; color: var(--text-muted);
+      margin-top: 8px; margin-bottom: 24px;
     }
-
-    /* ─── Footer ────────────────────────────────────────────── */
+    .media-placeholder {
+      border: 2px dashed var(--border-color); border-radius: var(--radius-lg);
+      padding: 48px 24px; text-align: center; color: var(--text-muted);
+      font-size: 0.85rem; margin-bottom: 24px; background: rgba(0, 229, 255, 0.02);
+    }
+    .media-placeholder .placeholder-icon { font-size: 2rem; margin-bottom: 8px; display: block; }
+    .media-placeholder .placeholder-hint {
+      font-size: 0.75rem; font-family: var(--font-mono);
+      color: var(--text-muted); margin-top: 4px; opacity: 0.7;
+    }
     .footer {
-      max-width: var(--max-width);
-      margin: 0 auto;
-      padding: 32px 24px;
-      border-top: 1px solid var(--border-color);
-      text-align: center;
-      font-size: 0.8rem;
-      color: var(--text-muted);
+      max-width: var(--max-width); margin: 0 auto; padding: 32px 24px;
+      border-top: 1px solid var(--border-color); text-align: center;
+      font-size: 0.8rem; color: var(--text-muted);
     }
-
-    /* ─── Responsive ────────────────────────────────────────── */
     @media (max-width: 768px) {
-      .layout {
-        grid-template-columns: 1fr;
-        gap: 24px;
-        padding: 16px;
-      }
+      .layout { grid-template-columns: 1fr; gap: 24px; padding: 16px; }
       .sidebar { display: none; }
       .hero h1 { font-size: 2rem; }
       .hero { padding: 32px 0 24px; }
       .feature-grid { grid-template-columns: 1fr; }
+      .media-placeholder { padding: 32px 16px; }
     }
   </style>
 </head>
 <body>
 
-<!-- ═══════════════════════════════════════════════════════════ -->
-<!-- TOP NAV                                                    -->
-<!-- ═══════════════════════════════════════════════════════════ -->
-<nav class="top-nav">
-  <a href="#" class="logo">
-    <span class="icon">📡</span>
-    <span>Signal Deck</span>
-  </a>
-  <div class="top-nav-links">
-    <a href="#installation">Install</a>
-    <a href="#getting-started">Guide</a>
-    <a href="#api-reference">API</a>
-    <a href="#ai-analyst">AI Analyst</a>
-    <a href="https://github.com/rsr5/signal-deck" class="github-link" target="_blank" rel="noopener">
-      <svg viewBox="0 0 16 16"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>
-      GitHub
-    </a>
-  </div>
-</nav>
-
-<div class="layout">
-<!-- ═══════════════════════════════════════════════════════════ -->
-<!-- SIDEBAR                                                    -->
-<!-- ═══════════════════════════════════════════════════════════ -->
-<aside class="sidebar">
-  <h4>Getting Started</h4>
-  <a href="#overview">Overview</a>
-  <a href="#installation">Installation</a>
-  <a href="#getting-started">Quick Start</a>
-  <a href="#card-config">Card Configuration</a>
-
-  <h4>Using the REPL</h4>
-  <a href="#repl-basics">REPL Basics</a>
-  <a href="#magic-commands">Magic Commands</a>
-  <a href="#auto-resolve">Auto-resolve</a>
-  <a href="#keyboard-shortcuts">Keyboard Shortcuts</a>
-
-  <h4>Python API</h4>
-  <a href="#api-reference">API Reference</a>
-  <a href="#api-state">State &amp; Entities</a>
-  <a href="#api-history">History &amp; Diagnostics</a>
-  <a href="#api-rooms">Rooms &amp; Services</a>
-  <a href="#api-utilities">Utilities</a>
-  <a href="#api-charts">Charts</a>
-
-  <h4>AI Analyst</h4>
-  <a href="#ai-analyst">Signal Analyst</a>
-  <a href="#ai-examples">Example Queries</a>
-
-  <h4>Architecture</h4>
-  <a href="#architecture">Three-Layer Design</a>
-  <a href="#security">Security Model</a>
-
-  <h4>Development</h4>
-  <a href="#development">Building</a>
-  <a href="#testing">Testing</a>
-  <a href="#contributing">Contributing</a>
-</aside>
-
-<!-- ═══════════════════════════════════════════════════════════ -->
-<!-- CONTENT                                                    -->
-<!-- ═══════════════════════════════════════════════════════════ -->
-<main class="content">
-
-<!-- ─── HERO ────────────────────────────────────────────────── -->
-<section class="hero" id="overview">
-  <div class="badges">
-    <span class="badge alpha">⚠ alpha</span>
-    <span class="badge version">v0.1.0</span>
-    <span class="badge license">MIT</span>
-    <span class="badge hacs">HACS</span>
-  </div>
-  <h1>Signal Deck</h1>
-  <p class="subtitle">
-    The oscilloscope for Home Assistant. A safe Python REPL embedded in Lovelace with a built-in AI analyst, rich charts, and deep state exploration — all running entirely in your browser.
-  </p>
-  <div class="hero-actions">
-    <a href="#installation" class="btn btn-primary">Get Started</a>
-    <a href="https://github.com/rsr5/signal-deck" class="btn btn-secondary" target="_blank" rel="noopener">
-      <svg viewBox="0 0 16 16" width="16" height="16" fill="currentColor"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>
-      GitHub
-    </a>
-  </div>
-</section>
-
-<!-- ─── WHAT IS SIGNAL DECK ─────────────────────────────────── -->
-<div class="screenshot" style="margin: 0 auto 48px; max-width: 900px;">
-  <img src="images/hero.png" alt="Signal Deck — Python REPL and AI analyst for Home Assistant" />
-</div>
-<section class="section" id="features">
-  <h2>What is Signal Deck?</h2>
-  <p>
-    Signal Deck is a custom Lovelace card that gives you a <strong>safe, sandboxed Python shell</strong> right inside
-    Home Assistant. It's designed for power users who want to explore entity state, debug automations, visualise
-    history data, and ask an AI analyst questions about their home — all without leaving their dashboard.
-  </p>
-
-  <p>
-    Built on <a href="https://github.com/pydantic/monty" target="_blank" rel="noopener">Monty</a> — Pydantic's
-    Python-in-WASM runtime — and a custom Rust shell engine compiled to WebAssembly.
-  </p>
-
-  <div class="feature-grid">
-    <div class="feature-card">
-      <div class="icon">🐍</div>
-      <h4>Python REPL</h4>
-      <p>Powered by <a href="https://github.com/pydantic/monty" target="_blank" rel="noopener">Monty</a> from Pydantic — a Python interpreter compiled to WebAssembly for safe, sandboxed execution.</p>
+  <!-- Top Nav -->
+  <nav class="top-nav">
+    <a href="#" class="logo"><span class="icon">&#x1F4E1;</span> Signal Deck</a>
+    <div class="top-nav-links">
+      <a href="#features">Features</a>
+      <a href="#installation">Install</a>
+      <a href="#api-reference">API</a>
+      <a href="#architecture">Architecture</a>
+      <a href="https://github.com/rsr5/signal-deck" class="github-link">
+        <svg viewBox="0 0 16 16"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>
+        GitHub
+      </a>
     </div>
-    <div class="feature-card">
-      <div class="icon">🤖</div>
-      <h4>AI Signal Analyst</h4>
-      <p>Built-in AI assistant that writes and executes Python against your live HA state. Powered by HA Conversation.</p>
-    </div>
-    <div class="feature-card">
-      <div class="icon">📊</div>
-      <h4>ECharts Visualisations</h4>
-      <p>Line, bar, pie, and time-series charts with one function call. Auto-themed to match Signal Deck.</p>
-    </div>
-    <div class="feature-card">
-      <div class="icon">🔍</div>
-      <h4>Deep State Explorer</h4>
-      <p>Magic commands to search, compare, and inspect entities — attributes, history, diffs, and more.</p>
-    </div>
-    <div class="feature-card">
-      <div class="icon">🔒</div>
-      <h4>Safe by Default</h4>
-      <p>Read-only state access. Service calls require explicit confirmation. No filesystem or network access.</p>
-    </div>
-    <div class="feature-card">
-      <div class="icon">🖥️</div>
-      <h4>Overlay Mode</h4>
-      <p>A Quake-style drop-down console that stays hidden until you need it. Toggle with backtick.</p>
-    </div>
-  </div>
-</section>
+  </nav>
 
-<!-- ─── SCREENSHOTS ─────────────────────────────────────────── -->
+  <!-- Layout -->
+  <div class="layout">
 
-<!-- ─── INSTALLATION ────────────────────────────────────────── -->
-<section class="section" id="installation">
-  <h2>Installation</h2>
+    <!-- Sidebar -->
+    <aside class="sidebar">
+      <h4>Getting Started</h4>
+      <a href="#features">Features</a>
+      <a href="#installation">Installation</a>
+      <a href="#quick-start">Quick Start</a>
+      <a href="#card-config">Card Configuration</a>
 
-  <div class="callout warning">
-    <strong>⚠ Alpha Software</strong>
-    Signal Deck is in active development. APIs may change between releases. Please report bugs on GitHub.
-  </div>
+      <h4>Using the REPL</h4>
+      <a href="#repl-basics">REPL Basics</a>
+      <a href="#magic-commands">Magic Commands</a>
+      <a href="#auto-resolve">Auto-resolve</a>
+      <a href="#keyboard-shortcuts">Keyboard Shortcuts</a>
 
-  <h3>HACS (Recommended)</h3>
-  <ol>
-    <li>Open HACS in Home Assistant</li>
-    <li>Click the three-dot menu → <strong>Custom repositories</strong></li>
-    <li>Add the repository URL: <code>https://github.com/rsr5/signal-deck</code></li>
-    <li>Select category: <strong>Lovelace</strong></li>
-    <li>Click <strong>Add</strong>, then find Signal Deck and install it</li>
-    <li>Restart Home Assistant</li>
-  </ol>
+      <h4>Python API</h4>
+      <a href="#api-reference">Overview</a>
+      <a href="#api-state">State &amp; Entities</a>
+      <a href="#api-history">History &amp; Diagnostics</a>
+      <a href="#api-calendar">Calendar Events</a>
+      <a href="#api-rooms">Rooms &amp; Services</a>
+      <a href="#api-utilities">Utilities</a>
+      <a href="#api-charts">Charts</a>
 
-  <h3>Manual Installation</h3>
-  <ol>
-    <li>Download <code>signal-deck.js</code> from the
-      <a href="https://github.com/rsr5/signal-deck/releases" target="_blank" rel="noopener">latest release</a></li>
-    <li>Copy it to <code>/config/www/signal-deck/signal-deck.js</code></li>
-    <li>Add the resource in Settings → Dashboards → Resources:</li>
-  </ol>
-  <pre><code class="language-yaml">url: /local/signal-deck/signal-deck.js
-type: module</code></pre>
-</section>
+      <h4>AI Analyst</h4>
+      <a href="#ai-analyst">Overview</a>
 
-<!-- ─── GETTING STARTED ─────────────────────────────────────── -->
-<section class="section" id="getting-started">
-  <h2>Quick Start</h2>
-  <p>Add Signal Deck to any Lovelace dashboard:</p>
-  <pre><code class="language-yaml">type: custom:signal-deck
-title: Signal Deck</code></pre>
+      <h4>Architecture</h4>
+      <a href="#architecture">Three Layers</a>
+      <a href="#data-flow">Data Flow</a>
+      <a href="#security">Security Model</a>
 
-  <p>That's it! You'll see a terminal-style REPL. Try these commands:</p>
+      <h4>Development</h4>
+      <a href="#development">Building</a>
+      <a href="#testing">Testing</a>
+      <a href="#project-structure">Project Structure</a>
+      <a href="#contributing">Contributing</a>
 
-  <pre><code class="language-python"># Check the state of an entity
-state("sensor.living_room_temperature")
+      <h4>More</h4>
+      <a href="#faq">FAQ</a>
+      <a href="#changelog">Changelog</a>
+    </aside>
 
-# List all lights
-states("light")
+    <!-- Content -->
+    <main class="content">
 
-# See entity history
-history("sensor.power_consumption", 12)
+      <!-- Hero -->
+      <section class="hero" id="hero">
+        <div class="badges">
+          <span class="badge alpha">&#x26A1; Alpha</span>
+          <span class="badge version">v0.1.0-alpha.1</span>
+          <span class="badge license">MIT</span>
+          <span class="badge hacs">HACS Custom</span>
+        </div>
+        <h1>Signal Deck</h1>
+        <p class="subtitle">
+          The oscilloscope for Home Assistant. A safe Python REPL embedded in Lovelace
+          with built-in AI analyst, ECharts visualisations, and deep state exploration &mdash;
+          powered by WebAssembly, runs entirely in your browser.
+        </p>
 
-# Search for entities
-%find *occupied*
+        <!-- SCREENCAST PLACEHOLDER -->
+        <div class="media-placeholder">
+          <span class="placeholder-icon">&#x1F3AC;</span>
+          Screencast &mdash; 30-60s demo of the REPL in action
+          <span class="placeholder-hint">docs/images/screencast.mp4 or animated GIF</span>
+        </div>
 
-# Ask the AI analyst
-%ask why is the kitchen light on?</code></pre>
-</section>
+        <div class="hero-actions">
+          <a href="#installation" class="btn btn-primary">&#x26A1; Get Started</a>
+          <a href="https://github.com/rsr5/signal-deck" class="btn btn-secondary">View on GitHub &rarr;</a>
+        </div>
 
-<!-- ─── CARD CONFIGURATION ──────────────────────────────────── -->
-<section class="section" id="card-config">
-  <h2>Card Configuration</h2>
+        <!-- HERO SCREENSHOT PLACEHOLDER -->
+        <div class="media-placeholder" style="margin-top: 28px;">
+          <span class="placeholder-icon">&#x1F4F8;</span>
+          Hero screenshot &mdash; full card showing REPL with rendered output
+          <span class="placeholder-hint">docs/images/hero-screenshot.png (1200x720 recommended)</span>
+        </div>
+      </section>
 
-  <table>
-    <thead>
-      <tr>
-        <th>Option</th>
-        <th>Type</th>
-        <th>Default</th>
-        <th>Description</th>
-      </tr>
-    </thead>
-    <tbody>
-      <tr>
-        <td><code>title</code></td>
-        <td>string</td>
-        <td><em>none</em></td>
-        <td>Card title displayed in the header</td>
-      </tr>
-      <tr>
-        <td><code>height</code></td>
-        <td>string</td>
-        <td><em>auto</em></td>
-        <td>Card height as CSS value (e.g. <code>"500px"</code>)</td>
-      </tr>
-      <tr>
-        <td><code>mode</code></td>
-        <td>string</td>
-        <td><code>"embedded"</code></td>
-        <td><code>"embedded"</code> — inline card<br><code>"overlay"</code> — floating console</td>
-      </tr>
-      <tr>
-        <td><code>overlay_position</code></td>
-        <td>string</td>
-        <td><code>"top"</code></td>
-        <td><code>"top"</code> · <code>"bottom"</code> · <code>"full"</code></td>
-      </tr>
-      <tr>
-        <td><code>overlay_height</code></td>
-        <td>string</td>
-        <td><code>"50vh"</code></td>
-        <td>Overlay panel height (for <code>top</code>/<code>bottom</code>)</td>
-      </tr>
-      <tr>
-        <td><code>show_analyst</code></td>
-        <td>boolean</td>
-        <td><code>true</code></td>
-        <td>Show the AI Signal Analyst tab</td>
-      </tr>
-      <tr>
-        <td><code>agent_id</code></td>
-        <td>string</td>
-        <td><em>auto</em></td>
-        <td>HA Conversation agent ID for the analyst</td>
-      </tr>
-    </tbody>
-  </table>
+      <!-- Features -->
+      <section class="section" id="features">
+        <h2>Features</h2>
+        <div class="feature-grid">
+          <div class="feature-card">
+            <div class="icon">&#x1F40D;</div>
+            <h4>Python REPL</h4>
+            <p>Real Python running in WebAssembly via Monty. Safe, sandboxed, instant &mdash; no backend required.</p>
+          </div>
+          <div class="feature-card">
+            <div class="icon">&#x1F4CA;</div>
+            <h4>ECharts Visualisations</h4>
+            <p>History timelines, binary sensor lanes, and custom charts rendered with Apache ECharts.</p>
+          </div>
+          <div class="feature-card">
+            <div class="icon">&#x1F916;</div>
+            <h4>AI Analyst</h4>
+            <p>Built-in analyst powered by HA Conversation. Ask &ldquo;why did this happen?&rdquo; in plain English.</p>
+          </div>
+          <div class="feature-card">
+            <div class="icon">&#x1F50D;</div>
+            <h4>Deep State Exploration</h4>
+            <p>Browse entities, attributes, rooms, and areas. Auto-resolve short names like <code>kitchen_temp</code>.</p>
+          </div>
+          <div class="feature-card">
+            <div class="icon">&#x1F4C5;</div>
+            <h4>Calendar Events</h4>
+            <p>Query calendar events with <code>events()</code>. Rich auto-rendering with colour-coded timelines.</p>
+          </div>
+          <div class="feature-card">
+            <div class="icon">&#x26A1;</div>
+            <h4>Rich Auto-render</h4>
+            <p>Entity cards, state tables, and charts render automatically. Just type an expression &mdash; the REPL picks the best view.</p>
+          </div>
+          <div class="feature-card">
+            <div class="icon">&#x1F512;</div>
+            <h4>Safe by Default</h4>
+            <p>Read-only state access. Service calls require explicit arming. No filesystem, no network, no eval.</p>
+          </div>
+          <div class="feature-card">
+            <div class="icon">&#x2699;&#xFE0F;</div>
+            <h4>Rust Shell Engine</h4>
+            <p>Command parsing, data transforms, and render-spec generation in Rust compiled to WASM. Fast and tiny.</p>
+          </div>
+        </div>
+        <!-- FEATURE SCREENSHOTS PLACEHOLDER -->
+        <div class="media-placeholder">
+          <span class="placeholder-icon">&#x1F4F8;</span>
+          Feature screenshots &mdash; 2-3 screenshots showing different features (entity cards, charts, AI analyst)
+          <span class="placeholder-hint">docs/images/feature-*.png (800x500 each)</span>
+        </div>
+      </section>
 
-  <h3>Embedded Mode</h3>
-  <pre><code class="language-yaml">type: custom:signal-deck
-title: My Shell
-height: 600px</code></pre>
+      <!-- Installation -->
+      <section class="section" id="installation">
+        <h2>Installation</h2>
+        <h3>HACS (Recommended)</h3>
+        <ol>
+          <li>Open HACS &rarr; <strong>Frontend</strong> &rarr; three-dot menu &rarr; <strong>Custom repositories</strong></li>
+          <li>Add <code>https://github.com/rsr5/signal-deck</code> as category <strong>Dashboard</strong></li>
+          <li>Search for <strong>Signal Deck</strong> and click <strong>Install</strong></li>
+          <li>Reload your browser</li>
+        </ol>
+        <h3>Manual</h3>
+        <ol>
+          <li>Download <code>signal-deck.js</code> from the <a href="https://github.com/rsr5/signal-deck/releases">latest release</a></li>
+          <li>Copy it to <code>config/www/signal-deck.js</code></li>
+          <li>In HA &rarr; <strong>Settings &rarr; Dashboards &rarr; Resources</strong>, add <code>/local/signal-deck.js</code> as JavaScript Module</li>
+          <li>Reload your browser</li>
+        </ol>
+      </section>
 
-  <h3>Overlay Mode</h3>
-  <p>Overlay mode renders a tiny launcher button. Click it (or press <kbd>`</kbd>) to reveal a Quake-style console.</p>
-  <pre><code class="language-yaml">type: custom:signal-deck
-mode: overlay
-overlay_position: top
-overlay_height: 50vh</code></pre>
+      <!-- Quick Start -->
+      <section class="section" id="quick-start">
+        <h2>Quick Start</h2>
+        <p>Add a new card to any dashboard and paste this YAML:</p>
+        <pre><code class="language-yaml">type: custom:signal-deck
+mode: embedded     # or "overlay" for floating panel
+height: 420</code></pre>
+        <p>Once the card loads, try these commands in the REPL:</p>
+        <pre><code class="language-python"># List all entities
+ls()
 
-  <h3>AI Analyst with Specific Agent</h3>
-  <pre><code class="language-yaml">type: custom:signal-deck
-agent_id: conversation.claude_sonnet</code></pre>
-</section>
+# Inspect a sensor
+get("sensor.living_room_temperature")
 
-<!-- ─── REPL BASICS ─────────────────────────────────────────── -->
-<section class="section" id="repl-basics">
-  <h2>Using the REPL</h2>
-  <p>
-    The Signal Deck REPL supports standard Python syntax plus special <strong>magic commands</strong> and
-    <strong>auto-resolve shortcuts</strong>. Everything runs inside a sandboxed WebAssembly interpreter — there
-    is no server-side code execution.
-  </p>
+# View 6 hours of history
+history("sensor.living_room_temperature", "6h")
 
-  <h3 id="magic-commands">Magic Commands</h3>
-  <p>Magic commands start with <code>%</code> or <code>:</code> and provide quick access to common operations:</p>
+# Upcoming calendar events
+events("calendar.home", "24h")</code></pre>
+        <!-- QUICK START SCREENSHOT PLACEHOLDER -->
+        <div class="media-placeholder">
+          <span class="placeholder-icon">&#x1F4F8;</span>
+          Quick start screenshot &mdash; REPL showing the commands above with rendered output
+          <span class="placeholder-hint">docs/images/quick-start.png</span>
+        </div>
+      </section>
 
-  <table>
-    <thead>
-      <tr>
-        <th>Command</th>
-        <th>Description</th>
-      </tr>
-    </thead>
-    <tbody>
-      <tr><td><code>:help</code></td><td>Show the help reference</td></tr>
-      <tr><td><code>:clear</code></td><td>Clear the output</td></tr>
-      <tr><td><code>%ls [domain]</code></td><td>List entities, optionally filtered by domain</td></tr>
-      <tr><td><code>%get &lt;entity_id&gt;</code></td><td>Show entity state and attributes</td></tr>
-      <tr><td><code>%find &lt;pattern&gt;</code></td><td>Search entities by glob pattern</td></tr>
-      <tr><td><code>%hist &lt;id&gt; [-h N]</code></td><td>Show entity history (last N hours)</td></tr>
-      <tr><td><code>%attrs &lt;id&gt;</code></td><td>Show all entity attributes</td></tr>
-      <tr><td><code>%diff &lt;id1&gt; &lt;id2&gt;</code></td><td>Compare two entities side-by-side</td></tr>
-      <tr><td><code>%bundle &lt;name&gt;</code></td><td>Run a named bundle</td></tr>
-      <tr><td><code>%fmt &lt;format&gt;</code></td><td>Set output format (<code>table</code>, <code>json</code>, <code>text</code>)</td></tr>
-      <tr><td><code>%ask &lt;question&gt;</code></td><td>Ask the AI Signal Analyst</td></tr>
-    </tbody>
-  </table>
+      <!-- Card Configuration -->
+      <section class="section" id="card-config">
+        <h2>Card Configuration</h2>
+        <table>
+          <thead><tr><th>Option</th><th>Type</th><th>Default</th><th>Description</th></tr></thead>
+          <tbody>
+            <tr><td><code>mode</code></td><td>string</td><td><code>"embedded"</code></td><td><code>"embedded"</code> (inline card) or <code>"overlay"</code> (floating panel)</td></tr>
+            <tr><td><code>height</code></td><td>number</td><td><code>420</code></td><td>Card height in pixels (embedded mode)</td></tr>
+            <tr><td><code>font_size</code></td><td>number</td><td><code>13</code></td><td>REPL font size in pixels</td></tr>
+            <tr><td><code>startup</code></td><td>string[]</td><td><code>[]</code></td><td>Python commands to run on card load</td></tr>
+            <tr><td><code>analyst_entity</code></td><td>string</td><td>&mdash;</td><td>Conversation agent entity for AI analyst</td></tr>
+          </tbody>
+        </table>
+        <!-- OVERLAY MODE SCREENSHOT PLACEHOLDER -->
+        <div class="media-placeholder">
+          <span class="placeholder-icon">&#x1F4F8;</span>
+          Overlay mode screenshot &mdash; showing the floating panel over a dashboard
+          <span class="placeholder-hint">docs/images/overlay-mode.png</span>
+        </div>
+      </section>
 
-  <h3 id="auto-resolve">Auto-resolve</h3>
-  <p>
-    You can type entity IDs or domain names directly — Signal Deck resolves them automatically:
-  </p>
-  <pre><code class="language-python"># Typing just an entity ID runs %get
-sensor.living_room_temperature
-# → equivalent to: %get sensor.living_room_temperature
+      <!-- REPL Basics -->
+      <section class="section" id="repl-basics">
+        <h2>Using the REPL</h2>
+        <p>Signal Deck gives you a Python prompt inside your dashboard. Type any expression and press <kbd>Enter</kbd> to evaluate it. Results are automatically rendered as rich cards, tables, or charts when possible.</p>
 
-# Typing a domain runs %ls
-light
-# → equivalent to: %ls light</code></pre>
+        <h3 id="magic-commands">Magic Commands</h3>
+        <p>Prefix commands with <code>%</code> for shell-level operations:</p>
+        <table>
+          <thead><tr><th>Command</th><th>Description</th></tr></thead>
+          <tbody>
+            <tr><td><code>%ls</code></td><td>List entities (with optional domain/pattern filter)</td></tr>
+            <tr><td><code>%get &lt;entity&gt;</code></td><td>Inspect a single entity with all attributes</td></tr>
+            <tr><td><code>%history &lt;entity&gt; &lt;period&gt;</code></td><td>Fetch and chart entity history</td></tr>
+            <tr><td><code>%events &lt;calendar&gt; &lt;period&gt;</code></td><td>List upcoming calendar events</td></tr>
+            <tr><td><code>%rooms</code></td><td>Show rooms/areas and their entities</td></tr>
+            <tr><td><code>%services &lt;domain&gt;</code></td><td>List available services for a domain</td></tr>
+            <tr><td><code>%hist</code></td><td>Show command history</td></tr>
+            <tr><td><code>%fmt &lt;format&gt;</code></td><td>Set output format (table, json, csv)</td></tr>
+            <tr><td><code>%clear</code></td><td>Clear the REPL output</td></tr>
+            <tr><td><code>:help</code></td><td>Show the built-in help reference</td></tr>
+          </tbody>
+        </table>
 
-  <h3 id="keyboard-shortcuts">Keyboard Shortcuts</h3>
-  <table>
-    <thead>
-      <tr>
-        <th>Key</th>
-        <th>Action</th>
-      </tr>
-    </thead>
-    <tbody>
-      <tr><td><kbd>`</kbd> (backtick)</td><td>Toggle overlay open/close (overlay mode)</td></tr>
-      <tr><td><kbd>Escape</kbd></td><td>Close overlay</td></tr>
-      <tr><td><kbd>↑</kbd> / <kbd>↓</kbd></td><td>Navigate command history</td></tr>
-      <tr><td><kbd>Enter</kbd></td><td>Execute command</td></tr>
-    </tbody>
-  </table>
-</section>
+        <h3 id="auto-resolve">Auto-resolve</h3>
+        <p>You don't need to type full entity IDs. Signal Deck fuzzy-matches short names:</p>
+        <pre><code class="language-python"># These all work:
+get("kitchen_temp")           # matches sensor.kitchen_temperature
+get("living_room_motion")     # matches binary_sensor.living_room_motion
+history("front_door", "12h")  # matches lock.front_door</code></pre>
 
-<!-- ─── API REFERENCE ───────────────────────────────────────── -->
-<section class="section" id="api-reference">
-  <h2>Python API Reference</h2>
-  <p>
-    Signal Deck provides a focused Python API for interacting with Home Assistant. All functions
-    are available as top-level names — no imports needed.
-  </p>
+        <h3 id="keyboard-shortcuts">Keyboard Shortcuts</h3>
+        <table>
+          <thead><tr><th>Key</th><th>Action</th></tr></thead>
+          <tbody>
+            <tr><td><kbd>Enter</kbd></td><td>Execute current line</td></tr>
+            <tr><td><kbd>Up</kbd> / <kbd>Down</kbd></td><td>Navigate command history</td></tr>
+            <tr><td><kbd>Ctrl</kbd>+<kbd>L</kbd></td><td>Clear output</td></tr>
+            <tr><td><kbd>Ctrl</kbd>+<kbd>C</kbd></td><td>Cancel / clear input</td></tr>
+            <tr><td><kbd>Tab</kbd></td><td>Auto-complete entity names</td></tr>
+          </tbody>
+        </table>
+      </section>
 
-  <!-- State & Entities -->
-  <h3 id="api-state">State &amp; Entities</h3>
-  <table>
-    <thead>
-      <tr>
-        <th>Function</th>
-        <th>Description</th>
-      </tr>
-    </thead>
-    <tbody>
-      <tr>
-        <td><code>state(entity_id)</code></td>
-        <td>Get entity state as an <code>EntityState</code> dataclass with <code>.state</code>, <code>.attributes</code>, <code>.last_changed</code></td>
-      </tr>
-      <tr>
-        <td><code>states([domain])</code></td>
-        <td>List all entity states, optionally filtered by domain (e.g. <code>states("light")</code>)</td>
-      </tr>
-      <tr>
-        <td><code>entities(entity_id)</code></td>
-        <td>Get entity registry entry — integration, device, platform details</td>
-      </tr>
-      <tr>
-        <td><code>devices([query])</code></td>
-        <td>List or search devices</td>
-      </tr>
-    </tbody>
-  </table>
+      <!-- API Reference -->
+      <section class="section" id="api-reference">
+        <h2>Python API Reference</h2>
+        <p>All functions are available at the top level &mdash; no imports needed.</p>
 
-  <pre><code class="language-python"># Get a single entity
-s = state("sensor.power")
-show(s)
-# → EntityState(state='1234', unit='W', last_changed=...)
+        <h3 id="api-state">State &amp; Entities</h3>
+        <table>
+          <thead><tr><th>Function</th><th>Description</th></tr></thead>
+          <tbody>
+            <tr><td><code>ls()</code></td><td>List all entities. Optional: <code>ls("sensor")</code> to filter by domain.</td></tr>
+            <tr><td><code>get(entity)</code></td><td>Get full state + attributes for an entity. Supports auto-resolve.</td></tr>
+            <tr><td><code>state(entity)</code></td><td>Get just the state value as a string.</td></tr>
+            <tr><td><code>attrs(entity)</code></td><td>Get just the attributes dict.</td></tr>
+            <tr><td><code>attr(entity, key)</code></td><td>Get a single attribute value.</td></tr>
+            <tr><td><code>show(value)</code></td><td>Explicitly render any value with rich auto-display.</td></tr>
+          </tbody>
+        </table>
 
-# List all binary sensors
-states("binary_sensor")</code></pre>
+        <h3 id="api-history">History &amp; Diagnostics</h3>
+        <table>
+          <thead><tr><th>Function</th><th>Description</th></tr></thead>
+          <tbody>
+            <tr><td><code>history(entity, period)</code></td><td>Fetch state history. Period: <code>"1h"</code>, <code>"6h"</code>, <code>"1d"</code>, <code>"7d"</code>.</td></tr>
+            <tr><td><code>changed(entity, period)</code></td><td>List state changes with timestamps.</td></tr>
+            <tr><td><code>last_changed(entity)</code></td><td>When the entity last changed state.</td></tr>
+          </tbody>
+        </table>
+        <div class="callout info">
+          <strong>Auto-render</strong>
+          Calling <code>history()</code> on a numeric sensor automatically renders an ECharts timeline. Binary sensors get lane-style charts.
+        </div>
 
-  <!-- History & Diagnostics -->
-  <h3 id="api-history">History &amp; Diagnostics</h3>
-  <table>
-    <thead>
-      <tr>
-        <th>Function</th>
-        <th>Description</th>
-      </tr>
-    </thead>
-    <tbody>
-      <tr>
-        <td><code>history(id, [hours])</code></td>
-        <td>Get entity history (default 6 hours)</td>
-      </tr>
-      <tr>
-        <td><code>statistics(id, [hours], [period])</code></td>
-        <td>Get long-term statistics</td>
-      </tr>
-      <tr>
-        <td><code>logbook([id], [hours])</code></td>
-        <td>Get logbook entries</td>
-      </tr>
-      <tr>
-        <td><code>traces([automation_id])</code></td>
-        <td>Get automation/script traces (all or specific)</td>
-      </tr>
-      <tr>
-        <td><code>error_log()</code></td>
-        <td>Fetch the HA error log</td>
-      </tr>
-      <tr>
-        <td><code>check_config()</code></td>
-        <td>Validate HA configuration</td>
-      </tr>
-    </tbody>
-  </table>
+        <h3 id="api-calendar">Calendar Events</h3>
+        <table>
+          <thead><tr><th>Function</th><th>Description</th></tr></thead>
+          <tbody>
+            <tr><td><code>events(calendar, period)</code></td><td>Fetch upcoming events. Period: <code>"24h"</code>, <code>"7d"</code>, etc.</td></tr>
+          </tbody>
+        </table>
+        <p>Returns a list of <code>CalendarEvent</code> objects with these fields:</p>
+        <table>
+          <thead><tr><th>Field</th><th>Type</th><th>Description</th></tr></thead>
+          <tbody>
+            <tr><td><code>summary</code></td><td>str</td><td>Event title</td></tr>
+            <tr><td><code>start</code></td><td>str</td><td>Start time (ISO 8601 or date)</td></tr>
+            <tr><td><code>end</code></td><td>str</td><td>End time (ISO 8601 or date)</td></tr>
+            <tr><td><code>description</code></td><td>str or None</td><td>Event description</td></tr>
+            <tr><td><code>location</code></td><td>str or None</td><td>Event location</td></tr>
+            <tr><td><code>all_day</code></td><td>bool</td><td>Whether this is an all-day event</td></tr>
+          </tbody>
+        </table>
+        <pre><code class="language-python"># Upcoming 24 hours
+events("calendar.home", "24h")
 
-  <div class="callout info">
-    <strong>💡 Auto-render</strong>
-    <code>history()</code>, <code>traces()</code>, <code>logbook()</code>, <code>statistics()</code>, and <code>error_log()</code> 
-    produce rich formatted output automatically. Call them as bare expressions — no need to wrap in <code>show()</code>.
-  </div>
+# Next 7 days from work calendar
+events("calendar.work", "7d")
 
-  <pre><code class="language-python"># Last 12 hours of temperature
-history("sensor.outdoor_temp", 12)
+# Auto-renders as a colour-coded event timeline</code></pre>
+        <div class="callout info">
+          <strong>Rich rendering</strong>
+          Calendar events auto-render with colour-coded cards showing time, summary, location, and an all-day badge where applicable.
+        </div>
 
-# Automation traces
-traces("automation.motion_lights")
+        <h3 id="api-rooms">Rooms &amp; Services</h3>
+        <table>
+          <thead><tr><th>Function</th><th>Description</th></tr></thead>
+          <tbody>
+            <tr><td><code>rooms()</code></td><td>List all rooms/areas and their entity counts.</td></tr>
+            <tr><td><code>room(name)</code></td><td>List all entities in a room.</td></tr>
+            <tr><td><code>services(domain)</code></td><td>List available services. <code>services("light")</code></td></tr>
+          </tbody>
+        </table>
 
-# Check configuration validity
-check_config()</code></pre>
+        <h3 id="api-utilities">Utilities</h3>
+        <table>
+          <thead><tr><th>Function</th><th>Description</th></tr></thead>
+          <tbody>
+            <tr><td><code>ago(period)</code></td><td>Convert period string to datetime. <code>ago("6h")</code></td></tr>
+            <tr><td><code>now()</code></td><td>Current datetime.</td></tr>
+            <tr><td><code>count(domain)</code></td><td>Count entities in a domain.</td></tr>
+            <tr><td><code>domains()</code></td><td>List all entity domains.</td></tr>
+            <tr><td><code>find(pattern)</code></td><td>Fuzzy search entities by name/ID.</td></tr>
+          </tbody>
+        </table>
 
-  <!-- Rooms & Services -->
-  <h3 id="api-rooms">Rooms &amp; Services</h3>
-  <table>
-    <thead>
-      <tr>
-        <th>Function</th>
-        <th>Description</th>
-      </tr>
-    </thead>
-    <tbody>
-      <tr>
-        <td><code>room(name)</code></td>
-        <td>Get all entities in an area/room</td>
-      </tr>
-      <tr>
-        <td><code>rooms()</code></td>
-        <td>List all areas/rooms</td>
-      </tr>
-      <tr>
-        <td><code>services([domain])</code></td>
-        <td>List available services</td>
-      </tr>
-      <tr>
-        <td><code>call_service(domain, service, data)</code></td>
-        <td>Call a HA service (requires confirmation)</td>
-      </tr>
-    </tbody>
-  </table>
+        <h3 id="api-charts">Charts</h3>
+        <table>
+          <thead><tr><th>Function</th><th>Description</th></tr></thead>
+          <tbody>
+            <tr><td><code>chart(entity, period)</code></td><td>Explicit chart rendering for an entity.</td></tr>
+            <tr><td><code>compare([entities], period)</code></td><td>Multi-entity overlay chart.</td></tr>
+          </tbody>
+        </table>
+        <pre><code class="language-python"># Compare two sensors on one chart
+compare(["sensor.indoor_temp", "sensor.outdoor_temp"], "24h")
 
-  <pre><code class="language-python"># What's in the living room?
-room("living_room")
+# Explicit chart for a binary sensor
+chart("binary_sensor.front_door", "12h")</code></pre>
+      </section>
 
-# List all rooms
-rooms()
+      <!-- AI Analyst -->
+      <section class="section" id="ai-analyst">
+        <h2>AI Analyst</h2>
+        <p>
+          Signal Deck includes a built-in AI analyst that connects to any
+          <a href="https://www.home-assistant.io/integrations/conversation/">HA Conversation agent</a>
+          (Ollama, OpenAI, Google, local models). It can read your entity states and
+          answer questions about your home.
+        </p>
+        <p>Configure the analyst entity in your card YAML:</p>
+        <pre><code class="language-yaml">type: custom:signal-deck
+analyst_entity: conversation.ollama  # or any conversation agent</code></pre>
+        <p>Then use the analyst button in the REPL toolbar, or ask directly:</p>
+        <pre><code class="language-python"># The analyst sees your current HA state and can run commands
+# to investigate. It works best with questions like:
+# "Why is the kitchen temperature rising?"
+# "Which lights are on right now?"
+# "Show me the front door history for today"</code></pre>
+        <div class="callout info">
+          <strong>Optimised for small models</strong>
+          The analyst prompt is carefully tuned for local LLMs (Llama, Mistral, Phi) running via Ollama.
+          It works with larger models too, but doesn't require them.
+        </div>
+        <!-- AI ANALYST SCREENSHOT PLACEHOLDER -->
+        <div class="media-placeholder">
+          <span class="placeholder-icon">&#x1F4F8;</span>
+          AI Analyst screenshot &mdash; showing a conversation with the analyst
+          <span class="placeholder-hint">docs/images/ai-analyst.png</span>
+        </div>
+      </section>
 
-# Call a service (will prompt for confirmation)
-call_service("light", "turn_off", {"entity_id": "light.kitchen"})</code></pre>
+      <!-- Architecture -->
+      <section class="section" id="architecture">
+        <h2>Architecture</h2>
+        <p>Signal Deck is built in three layers with strict boundaries:</p>
+        <div class="arch-diagram"><span class="layer-ts">&#x250C;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2510;
+&#x2502;  TypeScript (Lit Element)                      &#x2502;
+&#x2502;  Lovelace card &#xB7; HA WebSocket &#xB7; UI rendering    &#x2502;
+&#x2502;  Event subscriptions &#xB7; Security &#xB7; Auth          &#x2502;
+&#x251C;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2524;</span>
+<span class="layer-rust">&#x2502;  Rust Shell Engine (compiled to WASM)          &#x2502;
+&#x2502;  REPL state &#xB7; Command parsing &#xB7; Magics          &#x2502;
+&#x2502;  Output shaping &#xB7; Render specs &#xB7; Data transforms &#x2502;
+&#x251C;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2524;</span>
+<span class="layer-monty">&#x2502;  Monty (Python runtime, sandboxed)              &#x2502;
+&#x2502;  Executes user Python snippets only              &#x2502;
+&#x2502;  Called by Rust &#xB7; No direct HA access             &#x2502;
+&#x2514;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2518;</span></div>
 
-  <!-- Utilities -->
-  <h3 id="api-utilities">Utilities</h3>
-  <table>
-    <thead>
-      <tr>
-        <th>Function</th>
-        <th>Description</th>
-      </tr>
-    </thead>
-    <tbody>
-      <tr>
-        <td><code>show(value)</code></td>
-        <td>Pretty-print any value</td>
-      </tr>
-      <tr>
-        <td><code>now()</code></td>
-        <td>Current date/time</td>
-      </tr>
-      <tr>
-        <td><code>ago(spec)</code></td>
-        <td>Relative time — e.g. <code>ago("6h")</code>, <code>ago("2d")</code>, <code>ago("30m")</code></td>
-      </tr>
-      <tr>
-        <td><code>template(tpl)</code></td>
-        <td>Render a Jinja2 template via HA</td>
-      </tr>
-    </tbody>
-  </table>
+        <h3 id="data-flow">Data Flow</h3>
+        <ol>
+          <li>User types a command in the REPL</li>
+          <li>TypeScript passes input to the Rust WASM engine</li>
+          <li>Rust parses, determines if HA data is needed, returns a <strong>host call request</strong></li>
+          <li>TypeScript fetches data via HA WebSocket API</li>
+          <li>Rust processes data and returns a <strong>render spec</strong> (JSON)</li>
+          <li>TypeScript renders the spec as cards, tables, or ECharts</li>
+        </ol>
 
-  <!-- Charts -->
-  <h3 id="api-charts">Charts (ECharts)</h3>
-  <p>
-    Signal Deck includes built-in charting powered by Apache ECharts. Charts are rendered inline in
-    the REPL output, auto-themed to match Signal Deck's dark aesthetic.
-  </p>
+        <h3 id="security">Security Model</h3>
+        <ul>
+          <li><strong>Read-only by default</strong> &mdash; all state access is read-only</li>
+          <li><strong>No direct HA access from WASM</strong> &mdash; all I/O goes through TypeScript host functions</li>
+          <li><strong>No filesystem or network</strong> &mdash; the WASM sandbox prevents all external access</li>
+          <li><strong>Service calls require arming</strong> &mdash; <code>ha.arm()</code> must be called before any service call</li>
+          <li><strong>Auth stays in TypeScript</strong> &mdash; HA auth tokens never reach WASM</li>
+        </ul>
+      </section>
 
-  <table>
-    <thead>
-      <tr>
-        <th>Function</th>
-        <th>Description</th>
-      </tr>
-    </thead>
-    <tbody>
-      <tr>
-        <td><code>plot_line(labels, values, [title])</code></td>
-        <td>Line chart</td>
-      </tr>
-      <tr>
-        <td><code>plot_bar(labels, values, [title])</code></td>
-        <td>Bar chart</td>
-      </tr>
-      <tr>
-        <td><code>plot_pie(data, [title])</code></td>
-        <td>Pie chart — <code>data</code> is <code>{"name": value, ...}</code></td>
-      </tr>
-      <tr>
-        <td><code>plot_series(points, [title])</code></td>
-        <td>XY / time-series line chart</td>
-      </tr>
-    </tbody>
-  </table>
+      <!-- Development -->
+      <section class="section" id="development">
+        <h2>Development</h2>
 
-  <h3>Chart Examples</h3>
-  <pre><code class="language-python"># Simple line chart
-labels = ["Mon", "Tue", "Wed", "Thu", "Fri"]
-temps = [18.2, 19.5, 17.8, 20.1, 19.3]
-plot_line(labels, temps, "Weekly Temperature")
+        <h3>Prerequisites</h3>
+        <ul>
+          <li><strong>Rust</strong> (stable) + <code>wasm-pack</code></li>
+          <li><strong>Node.js</strong> &ge; 18 + npm</li>
+          <li>A Home Assistant instance for testing</li>
+        </ul>
 
-# Pie chart from a dictionary
-usage = {"Heating": 45, "Lighting": 20, "Appliances": 35}
-plot_pie(usage, "Energy Breakdown")
-
-# Multi-series bar chart
-plot_bar(
-    ["Kitchen", "Bedroom", "Office"],
-    {"Temperature": [22, 19, 21], "Humidity": [45, 55, 40]},
-    "Room Comparison"
-)
-
-# Time-series from history data
-h = history("sensor.power_consumption", 24)
-points = [(e["last_changed"], float(e["state"])) for e in h]
-plot_series(points, "Power Consumption (24h)")
-
-# Multi-series time-series
-plot_series({
-    "Indoor": indoor_points,
-    "Outdoor": outdoor_points,
-}, "Temperature Comparison")</code></pre>
-
-  <div class="callout info">
-    <strong>📈 Choosing the right chart</strong>
-    Use <code>plot_pie</code> for proportions, <code>plot_bar</code> for comparisons,
-    <code>plot_line</code> for categorical trends, and <code>plot_series</code> for time-series data
-    with timestamps. Time axes are auto-detected when x-values are epoch milliseconds.
-  </div>
-</section>
-
-<!-- ─── AI ANALYST ──────────────────────────────────────────── -->
-<section class="section" id="ai-analyst">
-  <h2>AI Signal Analyst</h2>
-  <p>
-    Signal Deck includes a built-in AI assistant called the <strong>Signal Analyst</strong>. It connects to
-    your Home Assistant Conversation integration (any LLM agent — Claude, Ollama, etc.) and can write and
-    execute Python code against your live HA state.
-  </p>
-
-  <p>
-    The analyst works in an iterative loop: it writes code, executes it, sees the results, and continues
-    until it can answer your question. It has full access to the Signal Deck Python API.
-  </p>
-
-  <h3>Accessing the Analyst</h3>
-  <p>You can reach the analyst in two ways:</p>
-  <ul>
-    <li>Click the <strong>Signal Analyst</strong> tab in the card header</li>
-    <li>Use the <code>%ask</code> magic command from the REPL: <code>%ask why is the heating on?</code></li>
-  </ul>
-
-  <h3 id="ai-examples">Example Queries</h3>
-  <pre><code class="language-python"># Natural language questions
-%ask which rooms are currently occupied?
-%ask why did the kitchen light turn on at 3am?
-%ask show me power consumption over the last 24 hours
-%ask compare indoor and outdoor temperature
-%ask which automations ran today?
-%ask is my config valid?
-%ask chart the agile electricity prices</code></pre>
-
-  <h3>Choosing an LLM Agent</h3>
-  <p>
-    The analyst uses whatever HA Conversation agent is configured. For best results, use
-    <strong>Claude 3.5 Sonnet</strong> or a similar capable model. Smaller local models (≤ 8B) work
-    but may need simpler questions.
-  </p>
-  <p>You can pin a specific agent in the card config:</p>
-  <pre><code class="language-yaml">type: custom:signal-deck
-agent_id: conversation.claude_sonnet</code></pre>
-</section>
-
-<!-- ─── ARCHITECTURE ────────────────────────────────────────── -->
-<section class="section" id="architecture">
-  <h2>Architecture</h2>
-  <p>
-    Signal Deck uses a <strong>three-layer architecture</strong> with strict boundaries between
-    I/O, logic, and execution:
-  </p>
-
-  <div class="arch-diagram"><span class="layer-ts">┌─────────────────────────────────────────────────────┐
-│  TypeScript (Lit Element)                           │
-│  Lovelace card · HA WebSocket bridge · UI rendering │
-│  Event subscriptions · scheduling · HACS packaging  │</span>
-├─────────────────────────────────────────────────────┤
-<span class="layer-rust">│  Rust Shell Engine (compiled to WASM)               │
-│  REPL state · command parsing · magics · history    │
-│  Output shaping · render-spec generation            │
-│  Data transforms · bundles · chart building         │</span>
-├─────────────────────────────────────────────────────┤
-<span class="layer-monty">│  Monty Python Runtime (Pydantic · sandboxed WASM)   │
-│  Executes user Python snippets only                 │
-│  Called by Rust · no direct HA access               │</span>
-└─────────────────────────────────────────────────────┘</div>
-
-  <h3>Data Flow</h3>
-  <ol>
-    <li>User types a command in the REPL</li>
-    <li><strong>TypeScript</strong> sends the input to the <strong>Rust</strong> shell engine (WASM)</li>
-    <li><strong>Rust</strong> parses the command — magic commands are handled directly; Python code is passed to <strong>Monty</strong></li>
-    <li>If the code needs HA data (e.g. <code>state("sensor.temp")</code>), Rust returns a <strong>host call request</strong></li>
-    <li><strong>TypeScript</strong> fetches data via the HA WebSocket API and passes it back to Rust</li>
-    <li><strong>Rust</strong> processes the data and returns a <strong>render spec</strong> (table, chart, text, etc.)</li>
-    <li><strong>TypeScript</strong> renders the spec to the DOM</li>
-  </ol>
-
-  <h3 id="security">Security Model</h3>
-  <p>Signal Deck is designed to be safe by default:</p>
-  <ul>
-    <li><strong>Sandboxed execution</strong> — Python runs in WebAssembly with no filesystem, network, or system access</li>
-    <li><strong>Read-only by default</strong> — All state access is read-only</li>
-    <li><strong>Gated service calls</strong> — <code>call_service()</code> requires explicit user confirmation before executing</li>
-    <li><strong>No backend</strong> — Everything runs in the browser via the HA WebSocket API</li>
-    <li><strong>No code injection</strong> — The Rust engine controls what Python code can do via a strict ABI</li>
-  </ul>
-</section>
-
-<!-- ─── DEVELOPMENT ─────────────────────────────────────────── -->
-<section class="section" id="development">
-  <h2>Development</h2>
-  <p>Signal Deck has two build steps: the Rust/WASM shell engine and the TypeScript Lovelace card.</p>
-
-  <h3>Prerequisites</h3>
-  <ul>
-    <li><a href="https://www.rust-lang.org/tools/install" target="_blank" rel="noopener">Rust</a> (stable toolchain)</li>
-    <li><a href="https://rustwasm.github.io/wasm-pack/" target="_blank" rel="noopener">wasm-pack</a></li>
-    <li><a href="https://nodejs.org/" target="_blank" rel="noopener">Node.js</a> ≥ 18</li>
-    <li>npm</li>
-  </ul>
-
-  <h3>Building</h3>
-  <pre><code class="language-bash"># Clone the repository
+        <h3>Building</h3>
+        <pre><code class="language-bash"># Clone the repo
 git clone https://github.com/rsr5/signal-deck.git
 cd signal-deck
 
 # Install JS dependencies
 npm install
 
-# Build the Rust shell engine → WASM
-npm run build:wasm
+# Build WASM + TypeScript
+npm run build
 
-# Build the Lovelace card bundle
-npm run build:ts
+# Or build each layer separately:
+npm run build:wasm    # Rust/WASM only
+npm run build:ts      # TypeScript/Rollup only</code></pre>
 
-# Or build everything at once
-npm run build</code></pre>
+        <h3>Dev Mode</h3>
+        <pre><code class="language-bash"># Watch mode (rebuilds on change)
+npm run dev
 
-  <p>The final output is <code>dist/signal-deck.js</code> (≈770 KB).</p>
+# Copy dist/signal-deck.js to your HA config/www/ folder
+# and add as a resource in Lovelace</code></pre>
 
-  <h3 id="testing">Testing</h3>
-  <pre><code class="language-bash"># Rust tests (167 tests)
-cargo test
+        <h3 id="testing">Testing</h3>
+        <pre><code class="language-bash"># Run all tests
+npm run test:all
 
-# TypeScript tests (Vitest)
-npx vitest run</code></pre>
+# Rust tests (144 tests)
+npm run test:rust
 
-  <h3>Project Structure</h3>
-  <pre><code class="language-bash">signal-deck/
-├── crates/shell-engine/     # Rust shell engine
-│   └── src/
-│       ├── engine.rs        # Core REPL engine + chart builders
-│       ├── magic.rs         # Magic command parser + help text
-│       ├── monty_runtime.rs # Monty Python integration
-│       └── lib.rs           # WASM entry points
-├── src/
-│   ├── signal-deck.ts       # Main Lit Element card
-│   ├── types/               # TypeScript types
-│   └── assistant/
-│       └── analyst-session.ts  # AI analyst agent loop
-├── pkg/                     # WASM build output (synced)
-├── dist/                    # Final card bundle
-├── rollup.config.js         # Rollup build config
-└── docs/                    # This documentation</code></pre>
+# TypeScript tests (19 tests)
+npm run test</code></pre>
 
-  <h3 id="contributing">Contributing</h3>
-  <p>
-    Contributions are welcome! Please read the architecture section above and respect the three-layer
-    boundaries:
-  </p>
-  <ul>
-    <li><strong>Rust</strong> owns REPL logic, magics, parsing, output shaping, and data transforms</li>
-    <li><strong>Monty</strong> only executes user Python snippets</li>
-    <li><strong>TypeScript</strong> owns HA I/O, DOM rendering, and Lovelace lifecycle</li>
-  </ul>
+        <h3 id="project-structure">Project Structure</h3>
+        <pre><code class="language-bash">signal-deck/
+  crates/shell-engine/     # Rust WASM engine
+    src/
+      lib.rs               # Entry point + host ABI
+      eval.rs              # Expression evaluator
+      magic.rs             # Magic commands + :help
+      render.rs            # Render spec generation
+      calendar.rs          # Calendar event handling
+  src/                     # TypeScript
+    card.ts                # Lovelace card element
+    repl.ts                # REPL UI component
+    renderers/             # Render spec renderers
+    assistant/             # AI analyst integration
+  docs/                    # This documentation site
+  dist/                    # Built output</code></pre>
 
-  <div class="callout info">
-    <strong>💡 Tip</strong>
-    When adding a new Python API function, update three places:
-    (1) <code>HA_EXTERNAL_FUNCTIONS</code> in <code>monty_runtime.rs</code>,
-    (2) the <code>:help</code> text in <code>magic.rs</code>, and
-    (3) the AI analyst system prompt in <code>analyst-session.ts</code>.
+        <h3 id="contributing">Contributing</h3>
+        <p>
+          We welcome contributions! Please see
+          <a href="https://github.com/rsr5/signal-deck/blob/main/CONTRIBUTING.md">CONTRIBUTING.md</a>
+          for guidelines.
+        </p>
+        <div class="callout warning">
+          <strong>Three-layer rule</strong>
+          Signal Deck has strict architectural boundaries. REPL logic belongs in Rust.
+          HA I/O belongs in TypeScript. Python execution belongs in Monty.
+          Please read <a href="#architecture">Architecture</a> before submitting a PR.
+        </div>
+      </section>
+
+      <!-- FAQ -->
+      <section class="section" id="faq">
+        <h2>FAQ</h2>
+
+        <h3>How big is the bundle?</h3>
+        <p>The JS bundle is ~2 MB and the WASM module is ~3.1 MB. Both are loaded lazily and cached by the browser. The WASM file uses content-hash cache busting for reliable updates.</p>
+
+        <h3>Does it need a backend?</h3>
+        <p>No. Signal Deck runs entirely in the browser using the HA WebSocket API. There is no custom integration or backend component to install.</p>
+
+        <h3>Is it safe?</h3>
+        <p>Yes. All Python runs in a WebAssembly sandbox with no filesystem or network access. State access is read-only by default. Service calls require explicit arming.</p>
+
+        <h3>Which Python version does Monty support?</h3>
+        <p>Monty implements a subset of Python 3 sufficient for data exploration &mdash; variables, functions, loops, list comprehensions, dicts, f-strings, and more. It is not a full CPython.</p>
+
+        <h3>Can I use it with my existing dashboards?</h3>
+        <p>Absolutely. Signal Deck is a standard Lovelace card. Add it to any view alongside your existing cards. The overlay mode gives you a floating panel that doesn't take up card space.</p>
+
+        <h3>Does the AI analyst send data to the cloud?</h3>
+        <p>That depends on your Conversation agent. If you use a local model (Ollama, llama.cpp), everything stays local. Cloud-based agents (OpenAI, Google) will process data on their servers.</p>
+
+        <h3>Which Home Assistant version do I need?</h3>
+        <p>Signal Deck requires Home Assistant 2024.1.0 or later for WebSocket API compatibility.</p>
+
+        <h3>Can I run automations from the REPL?</h3>
+        <p>Service calls are supported but gated behind an arming mechanism for safety. You must call <code>ha.arm()</code> before any service call, and a confirmation dialog is shown.</p>
+      </section>
+
+      <!-- Changelog -->
+      <section class="section" id="changelog">
+        <h2>Changelog</h2>
+        <p>See <a href="https://github.com/rsr5/signal-deck/blob/main/CHANGELOG.md">CHANGELOG.md</a> for the full release history.</p>
+
+        <h3>v0.1.0-alpha.1</h3>
+        <p>Initial alpha release with:</p>
+        <ul>
+          <li>Embedded Python REPL (Monty via WebAssembly)</li>
+          <li>Rust shell engine with magic commands and render specs</li>
+          <li>Full Python API: state, history, calendar events, rooms, services, charts</li>
+          <li>ECharts visualisations with auto-render</li>
+          <li>AI analyst integration via HA Conversation</li>
+          <li>Embedded and overlay display modes</li>
+          <li>Entity auto-resolve and rich entity cards</li>
+          <li>HACS-compatible packaging</li>
+        </ul>
+      </section>
+
+    </main>
   </div>
-</section>
 
-<!-- ─── FAQ ─────────────────────────────────────────────────── -->
-<section class="section" id="faq">
-  <h2>FAQ</h2>
+  <!-- Footer -->
+  <footer class="footer">
+    <p>
+      Signal Deck is open source under the
+      <a href="https://github.com/rsr5/signal-deck/blob/main/LICENSE">MIT License</a>.
+      Built by <a href="https://github.com/rsr5">Robin Ridler</a>.
+    </p>
+    <p style="margin-top: 8px;">
+      <a href="https://github.com/rsr5/signal-deck">GitHub</a> &middot;
+      <a href="https://github.com/rsr5/signal-deck/issues">Issues</a> &middot;
+      <a href="https://github.com/rsr5/signal-deck/discussions">Discussions</a>
+    </p>
+  </footer>
 
-  <h3>Is this safe to run on my Home Assistant?</h3>
-  <p>
-    Yes. Signal Deck runs entirely in your browser. Python code is sandboxed in WebAssembly with no
-    filesystem or network access. State access is read-only, and service calls require explicit confirmation.
-  </p>
-
-  <h3>Does this need a backend/add-on?</h3>
-  <p>
-    No. Signal Deck is a pure Lovelace card. It uses the standard HA WebSocket API for all data access.
-    No backend, no add-on, no server-side code.
-  </p>
-
-  <h3>Which LLM works best with the AI analyst?</h3>
-  <p>
-    Claude 3.5 Sonnet via the HA Conversation integration gives the best results. Smaller local models
-    (Llama 3.1 8B, Qwen 2.5, etc.) also work for simpler queries. The system prompt is tuned for small models.
-  </p>
-
-  <h3>Can I automate things with Signal Deck?</h3>
-  <p>
-    You can call HA services via <code>call_service()</code>, but each call requires user confirmation.
-    Signal Deck is designed as an observability and debugging tool, not an automation engine.
-  </p>
-
-  <h3>How big is the card bundle?</h3>
-  <p>
-    About 770 KB total, including the Rust/WASM shell engine, Monty Python runtime, and ECharts.
-    The WASM module is lazy-loaded on first use.
-  </p>
-
-  <h3>Can I use this without the AI analyst?</h3>
-  <p>
-    Absolutely. The REPL and all Python API functions work independently. Set <code>show_analyst: false</code>
-    in the card config to hide the analyst tab entirely.
-  </p>
-</section>
-
-</main>
-</div>
-
-<!-- ═══════════════════════════════════════════════════════════ -->
-<!-- FOOTER                                                     -->
-<!-- ═══════════════════════════════════════════════════════════ -->
-<footer class="footer">
-  <p>
-    Signal Deck — The oscilloscope for Home Assistant<br>
-    Made by <a href="https://github.com/rsr5" target="_blank" rel="noopener">Robin Ridler</a> · MIT License
-  </p>
-</footer>
-
-<script>
-  // ─── highlight.js init ──────────────────────────────────────
-  hljs.highlightAll();
-
-  // ─── Active sidebar link tracking ──────────────────────────
-  const sidebarLinks = document.querySelectorAll('.sidebar a');
-  const sections = document.querySelectorAll('.section, .hero');
-
-  function updateActive() {
-    let current = '';
-    sections.forEach(section => {
-      const top = section.offsetTop - 100;
-      if (window.scrollY >= top) {
-        current = section.id;
-      }
-    });
-    sidebarLinks.forEach(link => {
-      link.classList.toggle('active', link.getAttribute('href') === '#' + current);
-    });
-  }
-
-  window.addEventListener('scroll', updateActive, { passive: true });
-  updateActive();
-</script>
-
+  <script>
+    hljs.highlightAll();
+    // Active sidebar link tracking
+    var sections = document.querySelectorAll('.section, .hero');
+    var sidebarLinks = document.querySelectorAll('.sidebar a');
+    var observer = new IntersectionObserver(function(entries) {
+      entries.forEach(function(entry) {
+        if (entry.isIntersecting) {
+          sidebarLinks.forEach(function(link) { link.classList.remove('active'); });
+          var id = entry.target.id;
+          var activeLink = document.querySelector('.sidebar a[href="#' + id + '"]');
+          if (activeLink) activeLink.classList.add('active');
+        }
+      });
+    }, { rootMargin: '-20% 0px -80% 0px' });
+    sections.forEach(function(section) { observer.observe(section); });
+  </script>
 </body>
 </html>

@@ -4,6 +4,14 @@
     "description": "The oscilloscope for Home Assistant — a safe Python REPL Lovelace card",
     "author": "Robin Ridler",
     "license": "MIT",
+    "repository": {
+        "type": "git",
+        "url": "https://github.com/rsr5/signal-deck.git"
+    },
+    "homepage": "https://rsr5.github.io/signal-deck",
+    "bugs": {
+        "url": "https://github.com/rsr5/signal-deck/issues"
+    },
     "type": "module",
     "scripts": {
         "build:wasm": "wasm-pack build crates/shell-engine --target web --out-dir ../../pkg",

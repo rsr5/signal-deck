@@ -1,5 +1,8 @@
 {
     "name": "Signal Deck",
+    "description": "The oscilloscope for Home Assistant — a safe Python REPL Lovelace card with built-in AI analyst, ECharts visualisations, and deep state exploration.",
     "render_readme": true,
-    "filename": "signal-deck.js"
+    "filename": "signal-deck.js",
+    "homeassistant": "2024.1.0",
+    "content_in_root": false
 }
